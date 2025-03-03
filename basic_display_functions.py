@@ -25,14 +25,9 @@ def display_shape(df):
         st.write("Number of features:", df.shape[1])
 
 def cor_mat(df_cor):
-    selected_features = []
     st.write("Select the features to include in the correlation matrix:")
 
-    col1,col2 = st.columns(2)
-    for idx, c in enumerate(df_cor.columns):
-        with col2 if idx%2 else col1:
-            if st.checkbox(c, value = True, key=c):
-                selected_features.append(c)
+    selected_features = item_selection(df_cor.columns, min_non_selected=0, default_value=True, multi_column=True)
     df_cor = df_cor[selected_features] if selected_features else df_cor
     
     for col in df_cor.select_dtypes(exclude=['int64', 'float64']).columns:
@@ -45,7 +40,7 @@ def cor_mat(df_cor):
 
     return df_cor
 
-def repartition_display(show_method, serie, optimal_bins, bin_choice):
+def repartition_display(show_method, serie, bin_choice = None):
     if show_method == "Categories with more than 1 occurance":
         nb_of_values_per_cat = serie.value_counts()
         if any(nb_of_values_per_cat[nb_of_values_per_cat > 1]):
@@ -53,6 +48,8 @@ def repartition_display(show_method, serie, optimal_bins, bin_choice):
         else:
             st.write("None")
     else:
+        if bin_choice==None:
+            st.error("Select a number of bins")
         plt.figure()
         sns.histplot(serie, kde=True, bins=bin_choice)
         plt.title(f"Histogram of {serie.name}")
@@ -120,3 +117,38 @@ def filtered_data_basic_display(df, details=False):
             st.dataframe(round(df.describe(), 2), use_container_width=True)
     else:
         st.write("Number of Records:", df.shape[0])
+
+
+def item_selection(items, min_non_selected=1, default_value=False, multi_column=False):
+    """
+    Displays items you can select.
+    
+    Parameters:
+    - items: List of items to display as checkboxes.
+    - min_non_selected: Minimum number of items that must remain unselected. Default is 1.
+    - default_value: Default state of checkboxes. Default is False.
+    - multi_column: If True, checkboxes are displayed in two columns. Default is False.
+    
+    Returns:
+    - List of selected items.
+    """
+    checked_items = []
+    checked_count = sum(st.session_state.get(c, False) for c in items)
+    max_selected = len(items) - min_non_selected  
+
+    # Gestion des colonnes si multi_column est activé
+    columns = st.columns(2) if multi_column else [st.container()]  # Liste de colonnes (soit 2, soit 1)
+
+    for idx, c in enumerate(items):
+        col = columns[idx % len(columns)]  # Alterne entre col1 et col2 si multi_column=True
+
+        disabled = checked_count >= max_selected and not st.session_state.get(c, False)
+        
+        with col:
+            if st.checkbox(c, value=default_value, key=c, disabled=disabled):
+                checked_items.append(c)
+
+    return checked_items
+
+def display_rounded_df(df):
+    st.dataframe(round(df,2), use_container_width=True)

@@ -70,7 +70,7 @@ def summary_features(df):
 def apply_a_cond(condition, df, disp=False):
     """
     Verifies the truthness of the condition. Display the number of records corresponding.
-    Inputs:
+    Parameters:
     ---------
     condition: the condition to test (str)
     df: the dataset where to apply this condition.
@@ -86,4 +86,17 @@ def apply_a_cond(condition, df, disp=False):
     except Exception as e:
         error(f"Error : {e}")
         return None
-    
+
+def equal_width_reduction(df, nb_slices):
+    return pd.cut(df, bins=nb_slices, labels=False, include_lowest=True)
+
+def equal_freq_reduction(df, nb_slices):
+    try:
+        # Compute quantile-based bins (adaptive to the distribution)
+        quantiles = np.linspace(0, 1, nb_slices + 1)  # Create nb_slices bins
+        bins = df.quantile(quantiles).values  # Get actual data values
+
+        # Assign each value to a bin
+        return pd.cut(df, bins=bins, labels=False, include_lowest=True)
+    except Exception as e:
+        error(e)

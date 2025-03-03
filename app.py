@@ -19,8 +19,9 @@ def merge_and_update(selected_feature, merging_cat1, merging_cat2):
         selected_feature, merging_cat1, merging_cat2, st.session_state["data"]
     )
 
-def update_selected_feature():
-    st.session_state["data"][selected_feature] = df  # Met à jour les données
+def update_selected_feature(df, selected_feature):
+    st.session_state["data"][selected_feature] = df  # Update data
+    st.session_state.reducing_desactivation[selected_feature] = True
 
 #%%Page config
 st.set_page_config(page_title="Data Preprocessing App", page_icon=":clean:")
@@ -42,6 +43,9 @@ register = False #if the df changes, we need to register it in clean_dataset.csv
 st.sidebar.selectbox("y : ",st.session_state['data'].columns, key="y")
 binary_sol = {"Yes": True, "No": False}
 
+if "reducing_desactivation" not in st.session_state:
+    st.session_state.reducing_desactivation = {} #dictionnary used to deactivate the reducing possibilities when it already has been reduced
+
 with tab1:
     df = st.session_state['data'] #as we don't modify the dataset in this step, we can stock it in df
     if df is not None:
@@ -62,7 +66,7 @@ with tab1:
         st.dataframe(summary_features(df), use_container_width=True)
         
         bdf.new_title("Basic Statistics", "stat")
-        st.dataframe(round(df.describe(), 2), use_container_width=True)
+        bdf.display_rounded_df(df.describe())
 
         st.subheader("Boxplot of numerical features")
 
@@ -123,7 +127,7 @@ with tab3:
         with col2:
             st.header("Numerosity reduction")
             #curseur de quand c'est considéré comme categorical value
-            if st.session_state['data'][selected_feature].nunique() < 40:
+            if st.session_state['data'][selected_feature].nunique() < 40: #categorical feature
                 st.markdown(f"Categorical feature with **{st.session_state['data'][selected_feature].unique().shape[0]}** unique data.")
                 st.dataframe(st.session_state['data'][selected_feature].value_counts(), use_container_width=True)
                 choice = st.radio("What would you like to do ?", {"Erase lines", "Merge categories"}, horizontal=True)
@@ -139,65 +143,84 @@ with tab3:
                 
                 elif choice == "Merge categories":
                     n_unique = st.session_state['data'][selected_feature].unique()
-                    merging_cat1 = []
                     st.write("Which category will be replaced ?")
-                    checked_count = sum(st.session_state.get(c, False) for c in n_unique)
-                    for c in n_unique:
-                        disabled = checked_count >= len(n_unique) - 1 and not st.session_state.get(c, False)
-                        if st.checkbox(c, key=c, disabled=disabled): #enable merging multiple categories in 1
-                            merging_cat1.append(c)
+                    merging_cat1 = bdf.item_selection(n_unique)
                     merging_cat2 = st.selectbox("With which category ?", [cat for cat in n_unique if cat not in merging_cat1])
                     #is_condition = st.radio("Would you like to add a condition on the category for the merging ?", binary_sol, horizontal=True)
                     is_condition = "No"
                     if binary_sol[is_condition]:
                         condition = st.text_input("Type the condition", placeholder="cat == a")
                         if condition: apply_a_cond(f"{condition} and {selected_feature}=='{merging_cat1}'", df=st.session_state['data'])
-                        else: st.error("You didn't enter a condition")
+                        else: st.error("You didn't enter a condition.")
                     else:
                         filtered_data = st.session_state['data']
                     
-                    if merging_cat1:
+                    if merging_cat1: #merge button is available only if some features are selected by the user to prevent errors
                         st.button('Merge', on_click=merge_and_update, args=(selected_feature, merging_cat1, merging_cat2))
-                    
-            else:
+
+            else: #continuous features
                 st.markdown(f"Continuous feature with **{st.session_state['data'][selected_feature].nunique()}** unique data.")
                 show_method = st.radio("What do you want to show ?", {"Categories with more than 1 occurance", "Repartition of occurance"})
                 #Optimal nb of bins
                 bin_edges = np.histogram_bin_edges(st.session_state['data'][selected_feature].dropna(), bins="auto")  # Supprime les NaN si besoin
                 optimal_bins = len(bin_edges) - 1
-                bin_choice = 2
 
                 if show_method == "Repartition of occurance":
                     bin_choice = st.slider("Number of bins:", min_value=2, max_value=round(optimal_bins*1.5), value=optimal_bins)
-                bdf.repartition_display(show_method, st.session_state['data'][selected_feature], optimal_bins, bin_choice)
+                bdf.repartition_display(show_method, st.session_state['data'][selected_feature], bin_choice)
 
-                set_reduce_methods = {"Containing slices of same number of records":1, "Containing slice evenly separates":2, "Round the data":3}
-                reduce_method = st.radio("How do you want to reduce your data ?", set_reduce_methods)
-                nb_slice = st.slider("Number of slices:", min_value=2, max_value=round(optimal_bins*1.5), value=optimal_bins)
-                #PREVIEW of stats (boxplot ?) and hist ?
-                df = st.session_state['data'][selected_feature]
-                df = df.sort_values() #to obtain the values from the littlest to the bigger
-                min_val = np.nanmin(df)
-                nb_values = len(df)
-                max_val = np.nanmax(df)
+                set_reduce_methods = {"Equal-width intervals":1, "Equal-frequency intervals":2} #, "Round the data":3}
+                
+                if selected_feature not in st.session_state.reducing_desactivation:
+                    st.session_state.reducing_desactivation[selected_feature] = False
 
-                if set_reduce_methods[reduce_method]==1:
-                    nb_per_slice = nb_values//nb_slice
-                    for i in range(nb_slice):
-                        new_min = df[i]
-                        new_max = df[i+nb_per_slice]
-                        avg_value = df[i:i+nb_per_slice]/nb_slice
+                if not st.session_state.reducing_desactivation[selected_feature]:
+                    reduce_method = st.radio("How do you want to reduce your data ?", set_reduce_methods)
+                    #PREVIEW of stats (boxplot ?) and hist ?
 
-                elif set_reduce_methods[reduce_method]==3:
-                    st.dataframe(df.describe(), use_container_width=True)
-                    is_float = df.dtype == "float64"
-                    rounding_factor = st.slider("Rounding factor (in power of 10)", min_value=-2 if is_float else 1, max_value=int(np.log10(max_val)))
-                    df = np.round(st.session_state['data'][selected_feature] / 10**rounding_factor) * 10**rounding_factor
+                    df = st.session_state['data'][selected_feature]
+                    default_value = st.session_state['data'][selected_feature].nunique() - 1 #nb of unique value for the feature -1 to prevent any error
+                    max_value = round(optimal_bins*1.5)
+                    if max_value > default_value:
+                        max_value = default_value
+                    elif optimal_bins < default_value:
+                        default_value = optimal_bins
 
-                    bdf.repartition_display(show_method, st.session_state['data'][selected_feature], optimal_bins, bin_choice)
+                    nb_slices = st.slider("Number of slices:", min_value=2, max_value=max_value, value=default_value)
+                    
+                    if set_reduce_methods[reduce_method]==1:
+                        binned_series = equal_width_reduction(df, nb_slices)
 
-                    st.button("It's perfect like that", on_click=update_selected_feature)
+                    elif set_reduce_methods[reduce_method]==2:
+                        binned_series = equal_freq_reduction(df, nb_slices)
 
+                    # Summarize each bin
+                    bin_summary = df.groupby(binned_series).agg(["min", "max", "mean", "median"])
+
+                    st.write("Bin Ranges & Summary Statistics:")
+                    bdf.display_rounded_df(bin_summary)
+
+                    aggregate_type = st.selectbox("Which value would you like to keep foreach bin ?", {"Min", "Max", "Mean", "Median"})
+                    bin_values = df.groupby(binned_series).agg(aggregate_type.lower())
+                    df = binned_series.map(bin_values)
+
+                    #elif set_reduce_methods[reduce_method]==3: ECQ ON GARDE CETTE METHOD ?
+                    #    is_float = df.dtype == "float64"
+                    #   rounding_factor = st.slider("Rounding factor (in power of 10)", min_value=-2 if is_float else 1, max_value=int(np.log10(max_val)))
+                    #  df = np.round(st.session_state['data'][selected_feature] / 10**rounding_factor) * 10**rounding_factor
+
+                    dif_stat = pd.concat(
+                        [st.session_state['data'][selected_feature].describe(), df.describe()],
+                        axis=1,
+                        keys=["Before", "After"]
+                    )
+
+                    bdf.display_rounded_df(dif_stat)
+
+                    bdf.repartition_display(show_method, df, bin_choice)
+
+                    st.button("It's perfect like that", on_click=update_selected_feature, args=(df, selected_feature))
+                else: st.write("Discretization already done.")
 
                 #take average value between all of them / median value
             #erase useless categorical choices (appearing less time than the other), or merge them with other categories

@@ -13,21 +13,31 @@ import seaborn as sns
 import numpy as np
 import math
 import streamlit as st
+import random as rd
 
 def error(e):
     st.error(e)
 
-def display_shape(df):
+def success(s):
+    st.success(s)
+
+def display_shape(df, percent = False):
     col1, col2 = st.columns(2) #display 2 columns
     with col1:
-        st.write("Number of records:", df.shape[0])
+        records = (
+            round(df.shape[0] / st.session_state.data.shape[0] * 100, 2)
+            if percent 
+            else df.shape[0]
+        )
+        msg = "Percent" if percent else "Number"
+        st.write(f"{msg} of records: {records} {'%' if percent else ''}")
     with col2:
         st.write("Number of features:", df.shape[1])
 
 def cor_mat(df_cor):
     st.write("Select the features to include in the correlation matrix:")
 
-    selected_features = item_selection(df_cor.columns, min_non_selected=0, default_value=True, multi_column=True)
+    selected_features = item_selection(df_cor.columns, min_non_selected=0, default_value=True, multi_column=True, is_popover=True)
     df_cor = df_cor[selected_features] if selected_features else df_cor
     
     for col in df_cor.select_dtypes(exclude=['int64', 'float64']).columns:
@@ -55,9 +65,26 @@ def repartition_display(show_method, serie, bin_choice = None):
         plt.title(f"Histogram of {serie.name}")
         st.pyplot(plt)
 
-def display_boxplot(df, chosen_col, error_msg="Too many features. Please explore features one at a time"):
+def display_hist(df, col, hue_on = False):
+    threshold_cat = st.session_state.threshold_cat
+    is_cat = df[col].nunique()<threshold_cat #categorical variable
+    kde = ~is_cat #display kde only if non categorical
+
+    y = st.session_state.y
+    if df[y].nunique()>threshold_cat: hue_on = False #always false if y is not categorical
+    
+    #display side to side and not one over the other if non categorical
+    plt.figure()
+    if hue_on:
+        sns.histplot(data=df, x=col, kde=kde, hue=y, stat="percent", common_norm=False, multiple="dodge")
+    else:
+        sns.histplot(data=df, x=col, kde=kde)
+    plt.title(f"Histogram of {col}")
+    st.pyplot(plt)
+
+def display_boxplots(df, chosen_col, error_msg="Too many features. Please explore features one at a time"):
     """
-    Displays a boxplot of the chosen_col (NEEDS TO BE NUMERICAL) in the dataframe df
+    Displays a boxplot of each column in chosen_col (NEEDS TO BE NUMERICAL) in the dataframe df
     """
     #CHECK IF NUMERIC DATA
     num_size = len(chosen_col)
@@ -72,9 +99,9 @@ def display_boxplot(df, chosen_col, error_msg="Too many features. Please explore
         st.pyplot(fig)
     else: st.write(error_msg)
 
-def display_data(df, chosen_col, chart_type="Histogram"):
+def display_charts(df, chosen_col, chart_type="Histogram"):
     """
-    Displays an histogram or a pie chart of categorical values chosen_col of df
+    Displays histograms or a pie charts of categorical values chosen_col of df
     """
     #CHECK IF NUMERIC DATA
     size = len(chosen_col)
@@ -97,6 +124,7 @@ def display_data(df, chosen_col, chart_type="Histogram"):
     plt.tight_layout()
     st.pyplot(fig)
 
+
 def new_title(title_name, referral=None, is_hr=True):
     """
     Displays a title title_name, with refers to referral (default is title_name).
@@ -108,18 +136,18 @@ def new_title(title_name, referral=None, is_hr=True):
     if is_hr: st.markdown("<hr>", unsafe_allow_html=True)
     st.header(title_name)
 
-def filtered_data_basic_display(df, details=False):
+def filtered_data_display(df, details=False, msg="Filtered Data:"):
     if details:
-        st.write("Filtered Data:")
+        st.write(msg)
         st.dataframe(df)
-        display_shape(df)
+        display_shape(df, percent=True)
         with st.expander("Basic statistics"):
             st.dataframe(round(df.describe(), 2), use_container_width=True)
     else:
         st.write("Number of Records:", df.shape[0])
 
 
-def item_selection(items, min_non_selected=1, default_value=False, multi_column=False):
+def item_selection(items, min_non_selected=1, default_value=False, multi_column=False, is_popover=False, popover_msg="Filter items"):
     """
     Displays items you can select.
     
@@ -132,19 +160,30 @@ def item_selection(items, min_non_selected=1, default_value=False, multi_column=
     Returns:
     - List of selected items.
     """
+    is_nb = False # REPARE TO MAKE IT WORK WITH INT
+    items = [x for x in items if pd.notna(x) and x != ""] #GET RID OF NAN IF NAN IN ITEMS
+    
     checked_items = []
     checked_count = sum(st.session_state.get(c, False) for c in items)
     max_selected = len(items) - min_non_selected  
 
-    # Gestion des colonnes si multi_column est activé
-    columns = st.columns(2) if multi_column else [st.container()]  # Liste de colonnes (soit 2, soit 1)
+    container = st.popover(popover_msg) if is_popover else st
+    columns = container.columns(2) if multi_column else [container.container()] #2 columns if multi_column==True else 1
+
 
     for idx, c in enumerate(items):
-        col = columns[idx % len(columns)]  # Alterne entre col1 et col2 si multi_column=True
+        col = columns[idx % len(columns)]
 
         disabled = checked_count >= max_selected and not st.session_state.get(c, False)
         
         with col:
+            if is_nb==False:
+                key=c
+            elif is_nb==True:
+                c = str(c)
+                key = rd.randint(0,10**5)
+            
+            
             if st.checkbox(c, value=default_value, key=c, disabled=disabled):
                 checked_items.append(c)
 

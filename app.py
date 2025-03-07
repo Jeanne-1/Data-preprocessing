@@ -14,14 +14,18 @@ import math
 import basic_display_functions as bdf
 from other_functions import *
 
+if "threshold_cat" not in st.session_state:
+    st.session_state.threshold_cat = 40
+
+
 def merge_and_update(selected_feature, merging_cat1, merging_cat2):
     st.session_state["data"] = merge_features(
         selected_feature, merging_cat1, merging_cat2, st.session_state["data"]
     )
 
-def update_selected_feature(df, selected_feature):
+def update_selected_feature(df, selected_feature, desactivate=False):
     st.session_state["data"][selected_feature] = df  # Update data
-    st.session_state.reducing_desactivation[selected_feature] = True
+    if desactivate: st.session_state.reducing_desactivation[selected_feature] = True
 
 #%%Page config
 st.set_page_config(page_title="Data Preprocessing App", page_icon=":clean:")
@@ -41,10 +45,11 @@ if 'data' not in st.session_state or st.sidebar.button('Reload Data'):
 
 register = False #if the df changes, we need to register it in clean_dataset.csv
 st.sidebar.selectbox("y : ",st.session_state['data'].columns, key="y")
-binary_sol = {"Yes": True, "No": False}
 
 if "reducing_desactivation" not in st.session_state:
     st.session_state.reducing_desactivation = {} #dictionnary used to deactivate the reducing possibilities when it already has been reduced
+if "edited_types" not in st.session_state:
+    st.session_state["edited_types"] = st.session_state["data"].dtypes.astype(str).to_dict()
 
 with tab1:
     df = st.session_state['data'] #as we don't modify the dataset in this step, we can stock it in df
@@ -74,12 +79,12 @@ with tab1:
         num_col = df.select_dtypes(include=['number']).columns #columns in df corresponding in numerical values
         num_col = [col for col in num_col if col not in cat_col] #we keep only non categorical columns
         
-        bdf.display_boxplot(df, num_col)
+        bdf.display_boxplots(df, num_col)
 
         st.subheader("Categorical features")
         chart_type = st.radio("Prefered display type : ", ["Histogram", "Pie chart"])
         
-        bdf.display_data(df, cat_col, chart_type)
+        bdf.display_charts(df, cat_col, chart_type)
         
         bdf.new_title("Explore a feature more in detail", "feat")
         feature = st.selectbox("Choose a feature", df.columns)
@@ -99,59 +104,127 @@ with tab1:
 
 with tab2:
     if st.session_state['data'] is not None:
+        threshold_cat = st.session_state.threshold_cat
         st.write(f"This column has been chosen for y: {st.session_state.y}. You can change it in the sidebar.")
-        st.header("12")
+        col = st.session_state['data'].columns
+        #erase doublons
+        #deal with noise and outliers
+        #put outliers apart and get rid of noise
+
+        #consider as noise any data above or under first and last percentiles
+        col1, col2 = st.columns(2, vertical_alignment="center")
+        with col1:
+            selected_feature = st.selectbox("Which feature do you want to work with ?", col)
+        with col2:
+            hue_on = st.toggle(f"Comparing to {st.session_state.y}")
+        bdf.display_hist(st.session_state.data,selected_feature, hue_on)
+
+        df_selected_feature = st.session_state.data[selected_feature]
+        nb_cat_selected_feature = df_selected_feature.nunique()
+        few_categories = False #has the feature less than 3 cat ?
+
+        if nb_cat_selected_feature<3:
+            st.write(f"There are already {nb_cat_selected_feature} categories. You cannot erase a value.")
+            st.toggle("Delete the whole feature")
+            few_categories = True
+            #DEAL WITH THIS
+
+        #erase features with anormal values: when is it an anormal value ? do a check
+        #add a condition: anormal value given a certain cat (outlier detection)
+        elif nb_cat_selected_feature<threshold_cat:
+            st.write("Select anormal values :")
+            selected_items = bdf.item_selection(df_selected_feature.unique(), multi_column=True)
+
+        elif df_selected_feature.dtypes is float or int:
+            min_val = df_selected_feature.min()
+            max_val = df_selected_feature.max()
+            selected_items = st.slider(f"{selected_feature} is anormal when its value is not in between:", min_value = min_val, max_value = max_val, value=(min_val, max_val)) #get rid of the NaN
+            apply_a_cond(f"{selected_feature}<{selected_items[0]} or {selected_feature}>{selected_items[1]}", st.session_state.data, disp=True, msg="Data concerned by the change:")
+        
+        col1, col2 = st.columns([1,3])
+        with col1:
+            if ~few_categories and st.button("Erase the record(s)"):
+                #erase lines values outside [selected_items[0], selected_items[1]] or selected_items
+                #UPDATE THE DATA OBTAINED
+                erase_records(st.session_state.data, selected_feature, selected_items, threshold_cat)
+                st.rerun() #To update the display
+        with col2:
+            if ~few_categories and st.button("Replace with NaN"):
+                #replace values outside [selected_items[0], selected_items[1]] or selected_items with NaN
+                df = nan_replace(st.session_state.data, selected_feature, selected_items)
+                update_selected_feature(df, selected_feature)
+                st.rerun()
+
+        
+        #WHAT DO YOU WANT TO DO WITH MISSING VALUES ? REMOVAL/IMPUTATION (median, mean, DT ?)/IGNORE (if use of ML algorithm that deals with MV)
+
 
 with tab3:
     if st.session_state['data'] is not None:
+        threshold_cat = st.session_state.threshold_cat
         st.write(f"This column has been chosen for y: {st.session_state.y}. You can change it in the sidebar.")
         
-        st.dataframe(summary_features(df), use_container_width=True)
-
         bdf.cor_mat(st.session_state['data'])
         
         col = st.session_state['data'].columns
         #col = [c for c in col if col != y] # A REGLER
+        
+         # Définition des types possibles
+        possible_types = ["int64", "float64", "object", "category", "bool"]
+
+        # Utilisation de st.data_editor avec édition restreinte
+        edited_summary = st.data_editor(
+            summary_features(st.session_state.data),
+            column_config={
+                "Feature Type": st.column_config.SelectboxColumn(
+                    "Feature Type", options=possible_types
+                )
+            },
+            disabled=["", "Unique Values", "Missing %"], #You can only modify feature_type
+            use_container_width=True,
+            key="edited_rows"
+        )
+        st.button("Apply_change", on_click=apply_type_change) ##NOT WORKING
+        
         st.selectbox("Feature you want to modify", col, key="selected_feature")
+
         selected_feature = st.session_state.selected_feature
 
         col1, col2 = st.columns(2) #display 2 columns
         with col1:
-            st.header("Type correction")
-            #new_type = st.selectbox(f"New type for {selected_feature} : ", {"Numerical", "String"})
-            #if new_type == "Numerical":
-                #transform the data to numerical data : 
-                ##check if they are already numerical or not
-                ##if not, function to numeric them
+            st.header("Normalization and standardization")
+            
 
         with col2:
             st.header("Numerosity reduction")
             #curseur de quand c'est considéré comme categorical value
-            if st.session_state['data'][selected_feature].nunique() < 40: #categorical feature
+            if st.session_state['data'][selected_feature].nunique() < threshold_cat: #categorical feature
                 st.markdown(f"Categorical feature with **{st.session_state['data'][selected_feature].unique().shape[0]}** unique data.")
                 st.dataframe(st.session_state['data'][selected_feature].value_counts(), use_container_width=True)
                 choice = st.radio("What would you like to do ?", {"Erase lines", "Merge categories"}, horizontal=True)
-                
+                #MOVE ERASE LINE IN CLEANING
+
                 #possibilité de remplacer une valeur par NaN
+                ## CHANGE THE WAY OF DOING IT: st.data_editor WITH STH TO DEL AND STH TO MODIFY THE CAT
+                ## THEN BUTTON TO VALIDATE THE MODIFICATIONS
 
                 if choice == "Erase lines":
                     erase_cat = st.selectbox("Which category ?", st.session_state['data'][selected_feature].unique())
                     if st.button("Confirm the erasing"):
                         st.session_state['data'] = st.session_state['data'][st.session_state['data'][selected_feature] != erase_cat]
                         st.write(f"Lines successfully deleted. New shape : {st.session_state['data'].shape}")
-                        st.experimental_rerun() #To update the display
+                        st.rerun() #To update the display
                 
                 elif choice == "Merge categories":
                     n_unique = st.session_state['data'][selected_feature].unique()
                     st.write("Which category will be replaced ?")
                     merging_cat1 = bdf.item_selection(n_unique)
                     merging_cat2 = st.selectbox("With which category ?", [cat for cat in n_unique if cat not in merging_cat1])
-                    #is_condition = st.radio("Would you like to add a condition on the category for the merging ?", binary_sol, horizontal=True)
-                    is_condition = "No"
-                    if binary_sol[is_condition]:
+                    is_condition = st.toggle("Add a condition")
+                    if is_condition: #MAKE IT WORK
                         condition = st.text_input("Type the condition", placeholder="cat == a")
                         if condition: apply_a_cond(f"{condition} and {selected_feature}=='{merging_cat1}'", df=st.session_state['data'])
-                        else: st.error("You didn't enter a condition.")
+                        #else: st.error("You didn't enter a condition.")
                     else:
                         filtered_data = st.session_state['data']
                     
@@ -164,6 +237,7 @@ with tab3:
                 #Optimal nb of bins
                 bin_edges = np.histogram_bin_edges(st.session_state['data'][selected_feature].dropna(), bins="auto")  # Supprime les NaN si besoin
                 optimal_bins = len(bin_edges) - 1
+                bin_choice = 2
 
                 if show_method == "Repartition of occurance":
                     bin_choice = st.slider("Number of bins:", min_value=2, max_value=round(optimal_bins*1.5), value=optimal_bins)
@@ -219,7 +293,7 @@ with tab3:
 
                     bdf.repartition_display(show_method, df, bin_choice)
 
-                    st.button("It's perfect like that", on_click=update_selected_feature, args=(df, selected_feature))
+                    st.button("It's perfect like that", on_click=update_selected_feature, args=(df, selected_feature, True))
                 else: st.write("Discretization already done.")
 
                 #take average value between all of them / median value

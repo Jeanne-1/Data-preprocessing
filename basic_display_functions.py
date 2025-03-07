@@ -65,7 +65,7 @@ def repartition_display(show_method, serie, bin_choice = None):
         plt.title(f"Histogram of {serie.name}")
         st.pyplot(plt)
 
-def display_hist(df, col, hue_on = False):
+def display_cat_repartition(df, col, hue_on = False):
     threshold_cat = st.session_state.threshold_cat
     is_cat = df[col].nunique()<threshold_cat #categorical variable
     kde = ~is_cat #display kde only if non categorical
@@ -73,14 +73,23 @@ def display_hist(df, col, hue_on = False):
     y = st.session_state.y
     if df[y].nunique()>threshold_cat: hue_on = False #always false if y is not categorical
     
-    #display side to side and not one over the other if non categorical
-    plt.figure()
+    nb_plots = 1 if is_cat else 2
+    fig, axes = plt.subplots(1, nb_plots, figsize=(nb_plots*3, 3))
+    if nb_plots==1: axes = [axes]
     if hue_on:
-        sns.histplot(data=df, x=col, kde=kde, hue=y, stat="percent", common_norm=False, multiple="dodge")
+        sns.histplot(data=df, x=col, kde=kde, hue=y, stat="percent", common_norm=False, multiple="dodge", ax=axes[0])
     else:
-        sns.histplot(data=df, x=col, kde=kde)
-    plt.title(f"Histogram of {col}")
-    st.pyplot(plt)
+        sns.histplot(data=df, x=col, kde=kde, ax=axes[0])
+    
+    if nb_plots==2:
+        if hue_on:
+            sns.boxplot(data=df, y=col, x=y, flierprops={"marker": "x"},ax=axes[1])
+        else:
+            sns.boxplot(data=df, y=col, ax=axes[1])
+    plt.tight_layout()
+    name = "Histogram" if is_cat else "Repartition"
+    plt.title(f"{name} of {col}")
+    st.pyplot(fig)
 
 def display_boxplots(df, chosen_col, error_msg="Too many features. Please explore features one at a time"):
     """

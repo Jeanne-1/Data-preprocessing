@@ -82,7 +82,8 @@ def apply_a_cond(condition, df, disp=False, msg="Filtered Data:"):
     #DEAL IF YOU WANT TO WORK WITH THE SAME COL IN DATA CLEANING & TRANSFO
     try:
         filtered_data = df.query(condition)
-        filtered_data_display(filtered_data, disp, msg)
+        if len(filtered_data)!=0:
+            filtered_data_display(filtered_data, disp, msg)
         return filtered_data
     except Exception as e:
         error(f"Error : {e}")

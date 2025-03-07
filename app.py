@@ -117,7 +117,7 @@ with tab2:
             selected_feature = st.selectbox("Which feature do you want to work with ?", col)
         with col2:
             hue_on = st.toggle(f"Comparing to {st.session_state.y}")
-        bdf.display_hist(st.session_state.data,selected_feature, hue_on)
+        bdf.display_cat_repartition(st.session_state.data,selected_feature, hue_on)
 
         df_selected_feature = st.session_state.data[selected_feature]
         nb_cat_selected_feature = df_selected_feature.nunique()

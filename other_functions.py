@@ -8,8 +8,6 @@ Functions used in my app.py that do not need streamlit.
 """
 
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
 import math
 from basic_display_functions import filtered_data_display, error, success
@@ -115,7 +113,6 @@ def nan_replace(df, col, cat, threshold_cat=40):
         return df
 
 def erase_records(df, col, cond, threshold_cat=40):
-    # DEAL THIS TO MAKE IT WORK WITH COND A SERIE OR WITH COND A CONDITION ON CONTINUOUS DATA
     try:
         if df[col].nunique() < threshold_cat:
             if isinstance(cond, list):  # cond is a list of categories to delete
@@ -128,15 +125,15 @@ def erase_records(df, col, cond, threshold_cat=40):
                 df = df[(df[col] >= cond[0]) & (df[col] <= cond[1])]  # We only keep values in between cond[0] and cond[1]
             else:
                 error("Incorrect condition for continuous data. Please use a tuple (min, max).")
-                return df
 
         else:
             error("Unrecognize type of condition.")
-            return df
 
-        success(f"Lines successfully deleted. New shape : {df.shape}")
         return df
     
     except Exception as e:
         error(e)
         return df
+
+def delete_feature(df, feature):
+    return df.drop(feature, axis=1)

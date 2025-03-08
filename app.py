@@ -23,9 +23,12 @@ def merge_and_update(selected_feature, merging_cat1, merging_cat2):
         selected_feature, merging_cat1, merging_cat2, st.session_state["data"]
     )
 
-def update_selected_feature(df, selected_feature, desactivate=False):
-    st.session_state["data"][selected_feature] = df  # Update data
-    if desactivate: st.session_state.reducing_desactivation[selected_feature] = True
+def update_selected_feature(df, selected_feature = None, desactivate=False):
+    if selected_feature is not None: 
+        st.session_state["data"][selected_feature] = df  # Update data
+        if desactivate: 
+            st.session_state.reducing_desactivation[selected_feature] = True
+    else: st.session_state["data"] = df
 
 #%%Page config
 st.set_page_config(page_title="Data Preprocessing App", page_icon=":clean:")
@@ -124,8 +127,13 @@ with tab2:
         few_categories = False #has the feature less than 3 cat ?
 
         if nb_cat_selected_feature<3:
-            st.write(f"There are already {nb_cat_selected_feature} categories. You cannot erase a value.")
-            st.toggle("Delete the whole feature")
+            col1, col2 = st.columns([3,2], vertical_alignment="center")
+            with col1: st.write(f"There are already only {nb_cat_selected_feature} categories.")
+            with col2:
+                if st.button("Delete the whole feature"):
+                    df = delete_feature(st.session_state.data, selected_feature)
+                    update_selected_feature(df)
+                    st.rerun()
             few_categories = True
             #DEAL WITH THIS
 
@@ -143,13 +151,14 @@ with tab2:
         
         col1, col2 = st.columns([1,3])
         with col1:
-            if ~few_categories and st.button("Erase the record(s)"):
+            if not few_categories and st.button("Erase the record(s)"):
                 #erase lines values outside [selected_items[0], selected_items[1]] or selected_items
                 #UPDATE THE DATA OBTAINED
-                erase_records(st.session_state.data, selected_feature, selected_items, threshold_cat)
+                df = erase_records(st.session_state.data, selected_feature, selected_items, threshold_cat)
+                update_selected_feature(df)
                 st.rerun() #To update the display
         with col2:
-            if ~few_categories and st.button("Replace with NaN"):
+            if not few_categories and st.button("Replace with NaN"):
                 #replace values outside [selected_items[0], selected_items[1]] or selected_items with NaN
                 df = nan_replace(st.session_state.data, selected_feature, selected_items)
                 update_selected_feature(df, selected_feature)
@@ -202,9 +211,7 @@ with tab3:
                 st.markdown(f"Categorical feature with **{st.session_state['data'][selected_feature].unique().shape[0]}** unique data.")
                 st.dataframe(st.session_state['data'][selected_feature].value_counts(), use_container_width=True)
                 choice = st.radio("What would you like to do ?", {"Erase lines", "Merge categories"}, horizontal=True)
-                #MOVE ERASE LINE IN CLEANING
 
-                #possibilité de remplacer une valeur par NaN
                 ## CHANGE THE WAY OF DOING IT: st.data_editor WITH STH TO DEL AND STH TO MODIFY THE CAT
                 ## THEN BUTTON TO VALIDATE THE MODIFICATIONS
 

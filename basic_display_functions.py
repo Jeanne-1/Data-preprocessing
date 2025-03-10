@@ -24,13 +24,10 @@ def success(s):
 def display_shape(df, percent = False):
     col1, col2 = st.columns(2) #display 2 columns
     with col1:
-        records = (
-            round(df.shape[0] / st.session_state.data.shape[0] * 100, 2)
-            if percent 
-            else df.shape[0]
-        )
-        msg = "Percent" if percent else "Number"
-        st.write(f"{msg} of records: {records} {'%' if percent else ''}")
+        nb_records = df.shape[0]
+        if percent :
+            percent_records = round(nb_records / st.session_state.data.shape[0] * 100, 2)
+        st.write(f"Number of records: {nb_records} {f'({percent_records}%)' if percent else ''}")
     with col2:
         st.write("Number of features:", df.shape[1])
 
@@ -146,7 +143,7 @@ def new_title(title_name, referral=None, is_hr=True):
     st.header(title_name)
 
 def filtered_data_display(df, details=False, msg="Filtered Data:"):
-    if details:
+    if len(df)!=0 and details:
         st.write(msg)
         st.dataframe(df)
         display_shape(df, percent=True)

@@ -7,10 +7,8 @@ Created on Tue Mar 26 15:52:10 2024
 
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 import numpy as np
-import math
+from pandas.api.types import is_numeric_dtype
 import basic_display_functions as bdf
 from other_functions import *
 
@@ -29,6 +27,11 @@ def update_selected_feature(df, selected_feature = None, desactivate=False):
         if desactivate: 
             st.session_state.reducing_desactivation[selected_feature] = True
     else: st.session_state["data"] = df
+
+def update_fill_na(df_col, feature):
+    new_value = st.session_state.imputation  # Récupère la valeur actuelle
+    imputed_df = df_col.fillna(f"{new_value}")  # Remplit les NaN avec la nouvelle valeur
+    st.session_state.data[feature] = imputed_df
 
 #%%Page config
 st.set_page_config(page_title="Data Preprocessing App", page_icon=":clean:")
@@ -110,11 +113,14 @@ with tab2:
         threshold_cat = st.session_state.threshold_cat
         st.write(f"This column has been chosen for y: {st.session_state.y}. You can change it in the sidebar.")
         col = st.session_state['data'].columns
-        #erase doublons
+        #erase doublons (choice of cat to consider in doublons)
         #deal with noise and outliers
         #put outliers apart and get rid of noise
+        #what to do with noise ? erase record, erase the value, make an hypothesis and replace the value, use DT to replace the value
+        #erase records with more than n NaN values ?
 
-        #consider as noise any data above or under first and last percentiles
+        #consider as noise any data above or under first and last percentiles ?
+        bdf.new_title("Handle anormal values", is_hr=False)
         col1, col2 = st.columns(2, vertical_alignment="center")
         with col1:
             selected_feature = st.selectbox("Which feature do you want to work with ?", col)
@@ -135,7 +141,6 @@ with tab2:
                     update_selected_feature(df)
                     st.rerun()
             few_categories = True
-            #DEAL WITH THIS
 
         #erase features with anormal values: when is it an anormal value ? do a check
         #add a condition: anormal value given a certain cat (outlier detection)
@@ -143,7 +148,7 @@ with tab2:
             st.write("Select anormal values :")
             selected_items = bdf.item_selection(df_selected_feature.unique(), multi_column=True)
 
-        elif df_selected_feature.dtypes is float or int:
+        elif is_numeric_dtype(df_selected_feature):
             min_val = df_selected_feature.min()
             max_val = df_selected_feature.max()
             selected_items = st.slider(f"{selected_feature} is anormal when its value is not in between:", min_value = min_val, max_value = max_val, value=(min_val, max_val)) #get rid of the NaN
@@ -165,8 +170,110 @@ with tab2:
                 st.rerun()
 
         
-        #WHAT DO YOU WANT TO DO WITH MISSING VALUES ? REMOVAL/IMPUTATION (median, mean, DT ?)/IGNORE (if use of ML algorithm that deals with MV)
+        #WHAT DO YOU WANT TO DO WITH MISSING VALUES ? REMOVAL/IMPUTATION /IGNORE (if use of ML algorithm that deals with MV)
+        bdf.new_title("Handle missing values")
+        df = st.session_state.data
 
+        #DISPLAY FEATURES WITH NAN VALUES AND CHOSE WETHER OR NOT DELETE THEM
+        nan_features = df.isnull().sum()>0
+        nb_nan_features = nan_features.sum()
+        if nb_nan_features>0:
+            col1, col2 = st.columns([2,1], vertical_alignment="bottom")
+            with col1:
+                df_nan = pd.DataFrame({
+                    "Missing %": df.isna().mean()[nan_features] * 100,
+                    "Remove ?": False  # Initial values is false
+                })
+                edited_df_nan = st.data_editor(
+                    df_nan,
+                    disabled=["", "Missing %"],
+                    use_container_width=True
+                )
+            with col2:
+                if st.button("Delete checked features"):
+                    #For each checked feature in the tab, we remove the column from the df
+                    cols_to_remove = edited_df_nan[edited_df_nan["Remove ?"]].index.tolist()
+                    st.session_state.data.drop(columns=cols_to_remove, inplace=True)
+                    st.success(f"Features {cols_to_remove} successfully removed!")
+                    st.rerun()
+        
+            #CHANGE THE MAX TO BE THE MAX A RECORD CAN HAVE OF NAN VALUES
+            if nb_nan_features>1:
+                max_nan_values = st.slider(
+                    "Records with these NaN values or more:", 
+                    min_value=1, max_value=nb_nan_features, 
+                    value=1
+                    )
+            else: max_nan_values=1
+            bdf.filtered_data_display(
+                df[df.isna().sum(axis=1)>=max_nan_values], 
+                details=True, 
+                msg=f"Records with {max_nan_values} null value(s) or more:"
+                )
+            
+            col1, col2 = st.columns([1,2])
+            with col1:
+                st.subheader("Removal")
+                #check which records are concerned
+                if st.button("Erase these records"):
+                    #erase values with more than max_nan_values NaN
+                    df = df.dropna(thresh=df.shape[1] - max_nan_values) 
+
+            with col2:
+                st.subheader("Imputation")
+                imputation_feature = (
+                    df.columns[nan_features][0] if nb_nan_features==1
+                    else st.selectbox("Which feature do you want to impute null values ?", df.loc[:,nan_features].columns)
+                    )
+                is_continuous = df[imputation_feature].nunique(dropna=True)>threshold_cat
+                imputation_method_choice = {f"by a constant":0, f"with machine learning":1}
+                imputation_method = st.selectbox(f"How do you want to replace null values in {imputation_feature} ?", imputation_method_choice)
+                if imputation_method_choice[imputation_method]==0:
+                    if is_numeric_dtype(df[imputation_feature]):
+                        imputation = df[imputation_feature].median() # Median
+                        name = "median"
+                        ex_value = -1.0
+                    else:
+                        imputation = df[imputation_feature].mode().iloc[0]  # Mode
+                        name = "mode"
+                        ex_value = "Other"
+                    colA, colB = st.columns(2, vertical_alignment="center")
+                    with colA:
+                        st.write("Impute with...")
+                        if st.button(f"the {name}: {imputation}"):
+                            imputed_df = df[imputation_feature].fillna(imputation)
+                            update_selected_feature(imputed_df, imputation_feature)
+                            st.rerun()
+                        if is_continuous:
+                            imputation_mean = df[imputation_feature].mean()
+                            if st.button(f"the mean: {round(imputation_mean,2)}"):
+                                # TO ROUND CORRECTLY
+                                imputed_df = df[imputation_feature].fillna(imputation_mean)
+                                update_selected_feature(imputed_df, imputation_feature)
+                                st.rerun()
+                    with colB:
+                        if is_numeric_dtype(df[imputation_feature]):
+                            imputation_nb = st.number_input(
+                                "A new value:", 
+                                value=ex_value
+                                )
+                            st.button(
+                                "Impute", 
+                                on_click = update_selected_feature, 
+                                args=(df[imputation_feature].fillna(imputation_nb), imputation_feature)
+                                )
+                        else:
+                            st.text_input(
+                                "A new value:", 
+                                placeholder=ex_value, 
+                                key="imputation", 
+                                on_change=update_fill_na, 
+                                args=(df[imputation_feature], imputation_feature)
+                            )
+
+        else:
+            st.write("There are no missing value in the dataframe.")
+        
 
 with tab3:
     if st.session_state['data'] is not None:
@@ -303,7 +410,21 @@ with tab3:
                     st.button("It's perfect like that", on_click=update_selected_feature, args=(df, selected_feature, True))
                 else: st.write("Discretization already done.")
 
-                #take average value between all of them / median value
-            #erase useless categorical choices (appearing less time than the other), or merge them with other categories
-            #for continuous: identical number of person in each category or identical range
-        st.header("Dimensionality reduction")
+        bdf.new_title("Dimensionality reduction")
+        type_dim_red = st.selectbox("Type", {"Feature selection", "Feature construction"})
+
+        if type_dim_red == "Feature selection":
+            #whole_search = st.toggle("Exhaustive search")
+            #filter or wrapper ? Or only mRMR and QRA and EBR
+
+            st.write("We will only deal with filter methods. You can try wrapper or embedded methods if you're doing a ML algorithm.")
+            fs_method = st.selectbox("Which method do you want to adopt ?", {"mRMR", "QRA", "EBR"})
+            #when do you stop ? when you don't lost any information VS when you have a certain nb of features
+            #if fs_method == "mRMR":
+                
+            #filter methods: mRMR, QRA, EBR
+            #wrapper: GA
+        #FEATURE SELECTION: get rid of features that do not seam to be correlate with your y
+        #FEATURE CONSTRUCTION: do a PCA
+        #do a DT and keep only features that appear inside the DT
+        #FEATURE SELECTION

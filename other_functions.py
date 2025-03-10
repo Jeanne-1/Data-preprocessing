@@ -136,4 +136,4 @@ def erase_records(df, col, cond, threshold_cat=40):
         return df
 
 def delete_feature(df, feature):
-    return df.drop(feature, axis=1)
+    return df.drop(column = feature)

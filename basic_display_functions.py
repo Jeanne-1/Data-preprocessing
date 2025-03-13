@@ -12,8 +12,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 import math
+from sklearn.tree import plot_tree
 import streamlit as st
 import random as rd
+from pandas.api.types import is_numeric_dtype
 
 def error(e):
     st.error(e)
@@ -48,22 +50,24 @@ def cor_mat(df_cor):
     return df_cor
 
 def repartition_display(show_method, serie, bin_choice = None):
-    if show_method == "Categories with more than 1 occurance":
-        nb_of_values_per_cat = serie.value_counts()
-        if any(nb_of_values_per_cat[nb_of_values_per_cat > 1]):
-            st.dataframe(nb_of_values_per_cat[nb_of_values_per_cat > 1].reset_index().rename(columns={'index': serie.name, serie.name: 'Count'}), use_container_width=True)
+    try:
+        if show_method == "Categories with more than 1 occurance":
+            nb_of_values_per_cat = serie.value_counts()
+            if any(nb_of_values_per_cat[nb_of_values_per_cat > 1]):
+                st.dataframe(nb_of_values_per_cat[nb_of_values_per_cat > 1].reset_index().rename(columns={'index': serie.name, serie.name: 'Count'}), use_container_width=True)
+            else:
+                st.write("None")
         else:
-            st.write("None")
-    else:
-        if bin_choice==None:
-            st.error("Select a number of bins")
-        plt.figure()
-        sns.histplot(serie, kde=True, bins=bin_choice)
-        plt.title(f"Histogram of {serie.name}")
-        st.pyplot(plt)
+            if bin_choice==None:
+                st.error("Select a number of bins")
+            plt.figure()
+            sns.histplot(serie, kde=True, bins=bin_choice)
+            plt.title(f"Histogram of {serie.name}")
+            st.pyplot(plt)
+    except Exception as e:
+        error(e)
 
-def display_cat_repartition(df, col, hue_on = False):
-    threshold_cat = st.session_state.threshold_cat
+def display_cat_repartition(df, col, hue_on = False, threshold_cat=40):
     is_cat = df[col].nunique()<threshold_cat #categorical variable
     kde = not is_cat #display kde only if non categorical
 
@@ -109,7 +113,6 @@ def display_charts(df, chosen_col, chart_type="Histogram"):
     """
     Displays histograms or a pie charts of categorical values chosen_col of df
     """
-    #CHECK IF NUMERIC DATA
     size = len(chosen_col)
     cols_per_row = 4
     rows = math.ceil(size / cols_per_row)
@@ -142,13 +145,14 @@ def new_title(title_name, referral=None, is_hr=True):
     if is_hr: st.markdown("<hr>", unsafe_allow_html=True)
     st.header(title_name)
 
-def filtered_data_display(df, details=False, msg="Filtered Data:"):
+def filtered_data_display(df, details=False, stat=True, msg="Filtered Data:"):
     if len(df)!=0 and details:
         st.write(msg)
         st.dataframe(df)
         display_shape(df, percent=True)
-        with st.expander("Basic statistics"):
-            st.dataframe(round(df.describe(), 2), use_container_width=True)
+        if stat:
+            with st.expander("Basic statistics"):
+                st.dataframe(round(df.describe(), 2), use_container_width=True)
     else:
         st.write("Number of Records:", df.shape[0])
 
@@ -158,16 +162,16 @@ def item_selection(items, min_non_selected=1, default_value=False, multi_column=
     Displays items you can select.
     
     Parameters:
-    - items: List of items to display as checkboxes.
-    - min_non_selected: Minimum number of items that must remain unselected. Default is 1.
-    - default_value: Default state of checkboxes. Default is False.
-    - multi_column: If True, checkboxes are displayed in two columns. Default is False.
+    - items (list): List of items to display as checkboxes.
+    - min_non_selected (int): Minimum number of items that must remain unselected. Default is 1.
+    - default_value (bool): Default state of checkboxes. Default is False.
+    - multi_column (bool): If True, checkboxes are displayed in two columns. Default is False.
     
     Returns:
     - List of selected items.
     """
-    is_nb = False # REPARE TO MAKE IT WORK WITH INT
-    items = [x for x in items if pd.notna(x) and x != ""] #GET RID OF NAN IF NAN IN ITEMS
+    is_nb = is_numeric_dtype(items)
+    items = [x for x in items if pd.notna(x) and x != ""] #get rid of NaN if there are in items
     
     checked_items = []
     checked_count = sum(st.session_state.get(c, False) for c in items)
@@ -184,16 +188,22 @@ def item_selection(items, min_non_selected=1, default_value=False, multi_column=
         
         with col:
             if is_nb==False:
-                key=c
+                key = f"checkbox_{st.session_state.get('tab_key', 'default')}_{idx}_{c}"
             elif is_nb==True:
                 c = str(c)
-                key = rd.randint(0,10**5)
+                #the key is reinforce with a random number if c is an int
+                key = f"checkbox_{st.session_state.get('tab_key', 'default')}_{idx}_{c}_{rd.randint(0,10**5)}"
             
-            
-            if st.checkbox(c, value=default_value, key=c, disabled=disabled):
+            if st.checkbox(c, value=default_value, key=key, disabled=disabled):
                 checked_items.append(c)
 
     return checked_items
 
 def display_rounded_df(df):
     st.dataframe(round(df,2), use_container_width=True)
+
+def plot_decision_tree(model, feature_names, max_depth=4):
+    plt.figure(figsize=(15, 10))
+    plot_tree(model, feature_names=feature_names, filled=True, rounded=True, fontsize=8, max_depth=max_depth)
+    with st.expander("See the decision tree"):
+        st.pyplot(plt)

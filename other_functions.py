@@ -10,7 +10,10 @@ Functions used in my app.py that do not need streamlit.
 import pandas as pd
 import numpy as np
 import math
-from basic_display_functions import filtered_data_display, error, success
+from basic_display_functions import filtered_data_display, error, success, plot_decision_tree
+from sklearn.impute import KNNImputer
+from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
+from sklearn.preprocessing import LabelEncoder
 
 def load_data(uploaded_file):
     """
@@ -137,3 +140,130 @@ def erase_records(df, col, cond, threshold_cat=40):
 
 def delete_feature(df, feature):
     return df.drop(column = feature)
+
+def multiple_encode(df, selected_features):
+    """
+    Encode columns of a dataset that need to be encode (type object or category).
+
+    Parameters:
+        df (pd.DataFrame): The dataset
+        selected_features (list): The column to encode if needed
+
+    Returns:
+        df_encoded (pd.DataFrame): The encoded dataframe
+        label_encoders (list): The LabelEncoder of each encoded column
+    """
+    df_encoded = df[selected_features].copy()
+    label_encoders = {}
+
+    for col in df_encoded.select_dtypes(include=["object", "category"]).columns:
+        le = LabelEncoder()
+        df_encoded[col] = le.fit_transform(df_encoded[col])
+        label_encoders[col] = le
+
+    return df_encoded, label_encoders
+
+def knn_imputation(df, imputation_feature, selected_features, k=5):
+    """
+    Impute missing values in a column using K-Nearest Neighbors (KNN).
+
+    Parameters:
+        df (pd.DataFrame): The dataset
+        imputation_feature (str): The column to impute
+        selected_features (list): Features used for imputation
+        k (int): Number of neighbors (default: 5)
+
+    Returns:
+        pd.Series: The imputed values
+    """
+    df_known = df[df[imputation_feature].notna()]  
+
+    if df_known.shape[0] == 0:
+        print("No known values available for training the model.")
+        return None
+
+    X, label_encoders = multiple_encode(df, selected_features)
+
+    # The column to fill is it categorical ?
+    is_categorical = (
+        df[imputation_feature].dtype == "object" 
+        or df[imputation_feature].dtype.name == "category"
+        )
+
+    X[imputation_feature] = df[imputation_feature]
+
+    # Encode if yes
+    if is_categorical:
+        target_encoder = LabelEncoder()
+        X.loc[df[imputation_feature].notna(), imputation_feature] = target_encoder.fit_transform(df[imputation_feature].dropna().astype(str))
+
+    imputer = KNNImputer(n_neighbors=k)
+    X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
+
+    # Get only imputed values
+    imputed_values = X_imputed.loc[df[imputation_feature].isna(), imputation_feature]
+
+    # Reconvert to string
+    if is_categorical:
+        imputed_values = target_encoder.inverse_transform(imputed_values.astype(int))
+
+    return imputed_values 
+
+
+def decision_tree_imputation(df, imputation_feature, selected_features, max_depth=5, is_continuous=None):
+    """
+    Impute missing values in a column using a Decision Tree. Plot the 4 first nodes.
+
+    Parameters:
+        df (pd.DataFrame): The dataset
+        imputation_feature (str): The column to impute
+        selected_features (list): Features used for imputation
+        max_depth (int): Number of nodes (default: 5)
+        is_continuous (bool): If the target variable is continuous. Default calculate it based on a threshold of 40.
+
+    Returns:
+        pd.Series: The imputed values
+    """
+    df_known = df[df[imputation_feature].notna()] #lines without NaN
+
+    if df_known.shape[0] == 0:
+        error("No known values available for training the model.")
+        return None
+
+    if is_continuous==None:
+        is_continuous = df[imputation_feature].nunique(dropna=True)>40
+
+    df_encoded, label_encoders = multiple_encode(df, selected_features)
+
+    X_train = df_encoded.loc[df[imputation_feature].notna()]
+    y_train = df_known[imputation_feature]
+    X_missing = df_encoded.loc[df[imputation_feature].isna()]
+
+    # Encode if the target is categorical
+    if df[imputation_feature].dtype == "object" or df[imputation_feature].dtype.name == "category":
+        target_encoder = LabelEncoder()
+        y_train = target_encoder.fit_transform(y_train)
+        target_is_categorical = True
+    else:
+        target_is_categorical = False
+
+    # The model is different if the target is continuous or not
+    if is_continuous:
+        model = DecisionTreeRegressor(max_depth=max_depth, random_state=42)
+    else:
+        model = DecisionTreeClassifier(max_depth=max_depth, random_state=42)
+
+    model.fit(X_train, y_train)
+    imputed_values = model.predict(X_missing)
+    
+    # Reconvert to string
+    if target_is_categorical:
+        imputed_values = target_encoder.inverse_transform(imputed_values.astype(int))
+
+    if max_depth > 4:
+        # Modify the max_depth to show only the 4 first nodes
+        max_depth = 4 
+    plot_decision_tree(model, feature_names=selected_features, max_depth=max_depth)
+    
+    #ROUND IF CONTINUOUS VALUES
+    return imputed_values

@@ -18,6 +18,9 @@ threshold_cat = 40
 
 if 'tab_key' not in st.session_state: #constant to create unique keys for checkboxes
     st.session_state['tab_key'] = 'tab0'
+    
+if 'new_df' not in st.session_state:
+    st.session_state.new_df = None
 
 def merge_and_update(selected_feature, merging_cat1, merging_cat2, condition):
     st.session_state["data"] = of.merge_features(
@@ -575,14 +578,61 @@ with tab3:
         
         if type_dim_red == "Feature selection":
 
-            st.write("We will only deal with filter methods. You can try wrapper or embedded methods if you're doing a ML algorithm.")
-            fs_method = st.selectbox("Which method do you want to adopt ?", {"mRMR", "QRA", "EBR"})
+            st.write("We will only deal with filter methods using mRMR. You can try wrapper or embedded methods if you're doing a ML algorithm.")
+            
+            name = "select"
+            
+        else:
+            st.write("It's better to construct your features from scaled variables.")
+            name="have"
+        y = st.session_state.y
+        cols = [c for c in df.columns if c != y]
+            
+        nb_features_selected = st.slider(f"How many features do you want to {name} ?", min_value = 1, max_value = len(cols), value = 5)
+        selected_cols = bdf.item_selection(cols, min_non_selected=nb_features_selected, default_value = True, is_popover=True, popover_msg="Tested features")
+        
+        if len(selected_cols)==nb_features_selected:
+            st.write("You don't need to use a method, you already have the wanted amount of features.")
+            st.dataframe(selected_features)
+            
+        else:
+            if type_dim_red == "Feature selection": 
+                selected_cols.append(y)
+                if st.button("mRMR"):
+                    selected_features = of.mrmr_feature_selection(df[selected_cols], y)
+                    st.dataframe(selected_features)
+                    st.session_state.new_df = df[selected_features]
             #when do you stop ? when you don't lost any information VS when you have a certain nb of features
-            #if fs_method == "mRMR":
                 
-            #filter methods: mRMR, QRA, EBR
-            #wrapper: GA
-        #FEATURE SELECTION: get rid of features that do not seam to be correlate with your y
-        #FEATURE CONSTRUCTION: do a PCA
-        #do a DT and keep only features that appear inside the DT
-        #FEATURE SELECTION
+            #PCA
+            elif type_dim_red == "Feature construction":
+                df.dropna(inplace = True)
+                
+                X = df[selected_cols]
+                y = df[y]
+                
+                y_encoded, le = of.encode(y)
+                X_encoded, Xle = of.multiple_encode(X)
+                
+                if st.button("PCA"):
+                    pca = PCA(n_components=nb_features_selected)  # Keeping only 4 components
+                    new_df = pca.fit_transform(X_encoded)
+                    st.session_state.new_df = pd.DataFrame(new_df)
+                    st.dataframe(new_df)
+            
+            # MAKE IT WORK WITH OTHER DOWNLOADING FORMAT
+            # PUT BACK ID
+            # DOWNLOAD IN THE SIDE BAR AT ANY TIME YOUR FULL DATASET
+            if st.session_state.new_df is not None:
+                access_path = st.text_input("Access path", value=getcwd())
+                col1,col2 =st.columns(2, vertical_alignment="bottom")
+                with col1:
+                    file_name = st.text_input("Name of your file", value="preprocessed_data")
+                with col2:
+                    file_path = f"{access_path}\{file_name}.csv"
+                    if st.button("Download the obtained data"):
+                        try:
+                            st.session_state.new_df.to_csv(file_path, index=False)
+                            bdf.success("The file has been downloading.")
+                        except Exception as e:  
+                            bdf.error(f"Error in downloading the file: {e}")

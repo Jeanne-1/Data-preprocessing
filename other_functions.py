@@ -15,6 +15,7 @@ from basic_display_functions import filtered_data_display, error, success, plot_
 from sklearn.impute import KNNImputer
 from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
 from sklearn.preprocessing import LabelEncoder
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression, SelectKBest, f_regression
 
 def load_data(uploaded_file):
     """
@@ -25,6 +26,13 @@ def load_data(uploaded_file):
         return pd.read_csv(uploaded_file)
     else:
         return pd.read_csv("healthcare-dataset-stroke-data.csv")
+    
+def register_data(df, file_name):
+    try:
+        df.to_csv(file_name, index=False)
+        success("The file has been registered.")
+    except Exception as e:
+        error(f"Error in downloading the file: {e}")
 
 def merge_features(selected_feature, merging_cat1, merging_cat2, df, input_condition=None):
     """
@@ -305,3 +313,65 @@ def decision_tree_imputation(df, imputation_feature, selected_features, max_dept
     
     #ROUND IF CONTINUOUS VALUES
     return imputed_values
+
+def mrmr_feature_selection(df, target_col, n_features=5, relevance_metric="MI", redundancy_metric="correlation"):
+    """
+    Implement the mRMR algorithm (Minimum Redundancy Maximum Relevance).
+
+    Parameters:
+    - df (pd.DataFrame): DataFrame containing features and target
+    - target_col (str): Name of the target column
+    - n_features (int): Number of features to keep
+    - relevance_metric (str): Pertinence method ("MI" pour Mutual Information)
+    - redundancy_metric (str): Redundancy method ("correlation" ou "MI")
+
+    Return:
+    - List of the n_features selectionned with mRMR (list)
+    """
+    df = df.dropna().copy()
+    
+    X, le = multiple_encode(df.drop(columns=[target_col]))
+    y = df[target_col]
+    
+    if not is_numeric_dtype(y):
+        target_encoder = LabelEncoder()
+        y = target_encoder.fit_transform(y)
+
+    # Relevance
+    if relevance_metric == "MI":
+        if y.nunique() > 2:  # Regression problem
+            relevance = mutual_info_regression(X, y)
+        else:  # Classification problem
+            relevance = mutual_info_classif(X, y)
+    # CREATE OTHER RELEVANCE METRIC
+    
+    relevance_scores = pd.Series(relevance, index=X.columns).sort_values(ascending=False)
+
+    # Initialization with the most relevant feature
+    selected_features = [relevance_scores.idxmax()]
+    relevance_scores.drop(selected_features, inplace=True)
+
+    # Iterative selection of the features with minimum redundancy
+    for _ in range(n_features - 1):
+        max_score = -float("inf")
+        best_feature = None
+
+        for feature in relevance_scores.index:
+            if redundancy_metric == "correlation":
+                redundancy = np.mean([abs(X[feature].corr(X[sel])) for sel in selected_features])
+            elif redundancy_metric == "MI":
+                redundancy = np.mean([mutual_info_regression(X[[feature]], X[sel])[0] for sel in selected_features])
+            #DEAL WITH OTHER REDUNDANCY METRIC
+
+            miq = relevance_scores[feature] / redundancy 
+            # MODIFY THE PERTINANCE SCORE ?
+
+            if miq > max_score:
+                max_score = miq
+                best_feature = feature
+
+        if best_feature:
+            selected_features.append(best_feature)
+            relevance_scores.drop(best_feature, inplace=True)
+
+    return selected_features

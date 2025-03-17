@@ -10,7 +10,6 @@ Displaying functions used in my app.py.
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
 import math
 from sklearn.tree import plot_tree
 import streamlit as st
@@ -56,7 +55,7 @@ def repartition_display(show_method, serie, bin_choice = None):
             if any(nb_of_values_per_cat[nb_of_values_per_cat > 1]):
                 st.dataframe(nb_of_values_per_cat[nb_of_values_per_cat > 1].reset_index().rename(columns={'index': serie.name, serie.name: 'Count'}), use_container_width=True)
             else:
-                st.write("None")
+                st.write("Each category occurs one time.")
         else:
             if bin_choice==None:
                 st.error("Select a number of bins")
@@ -127,9 +126,8 @@ def display_charts(df, chosen_col, chart_type="Histogram"):
             df[column].value_counts().plot.pie(ax=ax, autopct='%1.1f%%', colors=sns.color_palette('Set2'))
         ax.set_title(column)
         ax.set_ylabel('')
-    if size<4:
-        for j in range(idx + 1, len(axes)): #delete unuse col
-            fig.delaxes(axes[j])
+    for j in range(idx + 1, len(axes)): #delete unuse charts
+        fig.delaxes(axes[j])
     plt.tight_layout()
     st.pyplot(fig)
 

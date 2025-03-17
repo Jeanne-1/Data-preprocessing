@@ -10,16 +10,18 @@ import pandas as pd
 import numpy as np
 from pandas.api.types import is_numeric_dtype
 import basic_display_functions as bdf
-from other_functions import *
+import other_functions as of
+from sklearn.decomposition import PCA
+from os import getcwd
 
-if "threshold_cat" not in st.session_state:
-    st.session_state.threshold_cat = 40
-if 'tab_key' not in st.session_state:
+threshold_cat = 40
+
+if 'tab_key' not in st.session_state: #constant to create unique keys for checkboxes
     st.session_state['tab_key'] = 'tab0'
 
-def merge_and_update(selected_feature, merging_cat1, merging_cat2):
-    st.session_state["data"] = merge_features(
-        selected_feature, merging_cat1, merging_cat2, st.session_state["data"]
+def merge_and_update(selected_feature, merging_cat1, merging_cat2, condition):
+    st.session_state["data"] = of.merge_features(
+        selected_feature, merging_cat1, merging_cat2, st.session_state["data"], condition
     )
 
 def update_selected_feature(df, selected_feature = None, desactivate=False):
@@ -48,7 +50,7 @@ st.sidebar.header("Data Upload")
 uploaded_file = st.sidebar.file_uploader("Upload your CSV file", type=["csv"])
 
 if 'data' not in st.session_state or st.sidebar.button('Reload Data'):
-    st.session_state['data'] = load_data(uploaded_file)
+    st.session_state['data'] = of.load_data(uploaded_file)
 
 register = False #if the df changes, we need to register it in clean_dataset.csv
 st.sidebar.selectbox("y : ",st.session_state['data'].columns, key="y")
@@ -58,6 +60,7 @@ if "reducing_desactivation" not in st.session_state:
 if "edited_types" not in st.session_state:
     st.session_state["edited_types"] = st.session_state["data"].dtypes.astype(str).to_dict()
 
+#%% Data visualization
 with tab1:
     st.session_state['tab_key'] = 'tab1'
     df = st.session_state['data'] #as we don't modify the dataset in this step, we can stock it in df
@@ -76,7 +79,7 @@ with tab1:
         bdf.display_shape(df)
         
         bdf.new_title("Global Features Information", "features")
-        st.dataframe(summary_features(df), use_container_width=True)
+        st.dataframe(of.summary_features(df), use_container_width=True)
         
         bdf.new_title("Basic Statistics", "stat")
         bdf.display_rounded_df(df.describe())
@@ -107,19 +110,19 @@ with tab1:
         bdf.new_title('Filtered Data', "filtered")
         user_input = st.text_input("Enter your condition:", placeholder="feature == a")
         if st.button('Apply', key=1):
-            if user_input: apply_a_cond(user_input, df=st.session_state['data'], disp=True)
+            if user_input: of.apply_a_cond(user_input, df=st.session_state['data'], disp=True)
             else: st.error("Please enter a condition")
 
+#%% Data Cleaning
 with tab2:
     if st.session_state['data'] is not None:
         st.markdown("""
         ## Data Cleaning
         - [Anormal Values](#av)
         - [Missing Values](#mv)
-        - [Redudancy](#red)
+        - [Redundancy](#red)
         """, unsafe_allow_html=True)
 
-        threshold_cat = st.session_state.threshold_cat
         st.write(f"This column has been chosen for y: {st.session_state.y}. You can change it in the sidebar.")
         col = st.session_state['data'].columns
        
@@ -142,7 +145,7 @@ with tab2:
             with col1: st.write(f"There are already only {nb_cat_selected_feature} categories.")
             with col2:
                 if st.button("Delete the whole feature"):
-                    df = delete_feature(st.session_state.data, selected_feature)
+                    df = of.delete_feature(st.session_state.data, selected_feature)
                     update_selected_feature(df)
                     st.rerun()
             few_categories = True
@@ -156,19 +159,19 @@ with tab2:
             min_val = df_selected_feature.min()
             max_val = df_selected_feature.max()
             selected_items = st.slider(f"{selected_feature} is anormal when its value is not in between:", min_value = min_val, max_value = max_val, value=(min_val, max_val)) #get rid of the NaN
-            apply_a_cond(f"{selected_feature}<{selected_items[0]} or {selected_feature}>{selected_items[1]}", st.session_state.data, disp=True, msg="Data concerned by the change:")
+            of.apply_a_cond(f"{selected_feature}<{selected_items[0]} or {selected_feature}>{selected_items[1]}", st.session_state.data, disp=True, msg="Data concerned by the change:")
         
         col1, col2 = st.columns([1,3])
         with col1:
             if not few_categories and st.button("Erase the record(s)"):
                 #erase lines values outside [selected_items[0], selected_items[1]] or selected_items
-                df = erase_records(st.session_state.data, selected_feature, selected_items, threshold_cat)
+                df = of.erase_records(st.session_state.data, selected_feature, selected_items, threshold_cat)
                 update_selected_feature(df)
                 st.rerun() #To update the display
         with col2:
             if not few_categories and st.button("Replace with NaN"):
                 #replace values outside [selected_items[0], selected_items[1]] or selected_items with NaN
-                df = nan_replace(st.session_state.data, selected_feature, selected_items)
+                df = of.nan_replace(st.session_state.data, selected_feature, selected_items)
                 update_selected_feature(df, selected_feature)
                 st.rerun()
         
@@ -297,38 +300,39 @@ with tab2:
                 name = "Max depth :" if ml_choice == "Decision Tree" else "Number of neighbors :"
                 arg = st.slider(name, min_value = 2, max_value = 10, value=4)
                 df_copy = st.session_state.data.copy() # To avoid directly modifying the dataset
-
-                if ml_choice == "Decision Tree":
-                    imputed_values = decision_tree_imputation(df_copy, imputation_feature, selected_features, max_depth=arg, is_continuous=is_continuous)
-                else:
-                    imputed_values = knn_imputation(st.session_state.data, imputation_feature, selected_features, k=arg)
                 
-                colA, colB = st.columns([4,1], vertical_alignment="bottom")
-                
-                # Visualisation
-                with colA:
-                    imputed_serie = pd.Series(imputed_values)
-                    
-                    if is_continuous:
-                        dif_stat = pd.concat(
-                            [st.session_state['data'][imputation_feature].describe(), imputed_serie.describe()],
-                            axis=1,
-                            keys=["Original values", "Imputed values"]
-                        )
-
-                        bdf.display_rounded_df(dif_stat)
+                if st.button("Visualize"):
+                    if ml_choice == "Decision Tree":
+                        imputed_values = of.decision_tree_imputation(df_copy, imputation_feature, selected_features, max_depth=arg, is_continuous=is_continuous)
                     else:
-                        st.write(imputed_serie.value_counts())
-
-                with colB:
-                    if st.button("Impute", type="tertiary"):
-                        st.session_state.data.loc[st.session_state.data[imputation_feature].isna(), imputation_feature] = imputed_values
-                        st.rerun()
+                        imputed_values = of.knn_imputation(st.session_state.data, imputation_feature, selected_features, k=arg)
+                    
+                    colA, colB = st.columns([4,1], vertical_alignment="bottom")
+                    
+                    # Visualization
+                    with colA:
+                        imputed_serie = pd.Series(imputed_values)
+                        
+                        if is_continuous:
+                            dif_stat = pd.concat(
+                                [st.session_state['data'][imputation_feature].describe(), imputed_serie.describe()],
+                                axis=1,
+                                keys=["Original values", "Imputed values"]
+                            )
+    
+                            bdf.display_rounded_df(dif_stat)
+                        else:
+                            st.write(imputed_serie.value_counts())
+    
+                    with colB:
+                        if st.button("Impute", type="tertiary"):
+                            st.session_state.data.loc[st.session_state.data[imputation_feature].isna(), imputation_feature] = imputed_values
+                            st.rerun()
         else:
             st.write("There are no missing value in the dataframe.")
         
-        # deal with redudancy
-        bdf.new_title("Redudancy", "red")
+        # deal with redundancy
+        bdf.new_title("Redundancy", "red")
         st.session_state['tab_key'] = 'tab2_red'
 
         selected_items = df.columns
@@ -348,7 +352,7 @@ with tab2:
         
         if duplicate_nb>0:
             with st.expander("See the concerned record(s)"):
-                filtered_data_display(df.loc[df.duplicated(subset=selected_items)], details=True, stat=False)
+                bdf.filtered_data_display(df.loc[df.duplicated(subset=selected_items)], details=True, stat=False)
             if st.button("Erase them"):
                 # erase values with more than max_nan_values NaN
                 threshold = df.shape[1] - max_nan_values + 1
@@ -356,24 +360,29 @@ with tab2:
                 st.session_state["data"] = df
                 st.rerun()
 
-        
+#%% Data Transformation and reduction
 with tab3:
     st.session_state['tab_key'] = 'tab3'
     if st.session_state['data'] is not None:
-        threshold_cat = st.session_state.threshold_cat
+        st.markdown("""
+        ## Data Transformation and Reduction
+        - [Type change](#tc)
+        - [Normalization and Standardization](#ns)
+        - [Numerosity Reduction](#num_red)
+        - [Dimensionality Reduction](#dim_red)
+        """, unsafe_allow_html=True)
         st.write(f"This column has been chosen for y: {st.session_state.y}. You can change it in the sidebar.")
         
-        bdf.cor_mat(st.session_state['data'])
-        
         col = st.session_state['data'].columns
-        #col = [c for c in col if col != y] # A REGLER
         
-         # Définition des types possibles
+        bdf.new_title("Type change", "tc", is_hr=False)
+        
+         # Possible types
         possible_types = ["int64", "float64", "object", "category", "bool"]
-
-        # Utilisation de st.data_editor avec édition restreinte
-        edited_summary = st.data_editor(
-            summary_features(st.session_state.data),
+        df = st.session_state.data.copy()
+        
+        st.data_editor(
+            of.summary_features(st.session_state.data),
             column_config={
                 "Feature Type": st.column_config.SelectboxColumn(
                     "Feature Type", options=possible_types
@@ -381,74 +390,140 @@ with tab3:
             },
             disabled=["", "Unique Values", "Missing %"], #You can only modify feature_type
             use_container_width=True,
-            key="edited_rows"
+            key="edited_type",
         )
-        st.button("Apply_change", on_click=apply_type_change) ##NOT WORKING
         
-        st.selectbox("Feature you want to modify", col, key="selected_feature")
-
-        selected_feature = st.session_state.selected_feature
-
-        col1, col2 = st.columns(2) #display 2 columns
-        with col1:
-            st.header("Normalization and standardization")
+        if "edited_type" in st.session_state:
+            edited_rows = st.session_state.edited_type.get("edited_rows")
             
+            for row, feature_type in edited_rows.items():
+                new_type = feature_type.get("Feature Type")
+                col_name = col[row]
+                old_type = str(df[col_name].dtype)
+                if new_type != old_type:
+                    with st.expander(f"Apply type change on {col_name}"):
+                        nb_values = df[col_name].nunique()
+                        try:
+                            if new_type == "bool" and nb_values<3:
+                                true_value = st.radio("True is:", df[col_name].unique(), horizontal=True)
+                                false_values = [c for c in df[col_name].unique() if c != true_value]
+                                df.loc[df[col_name] == true_value, col_name] = True
+                                df.loc[df[col_name].isin(false_values), col_name] = False
+                            elif old_type in ["object", "category"] and new_type not in ["object", "category"]:
+                                new_col, le = of.encode(df[col_name])
+                                df[col_name] = new_col
+                                
+                            if st.button(f"Confirm bool conversion for {col_name}"):
+                                df[col_name] = df[col_name].astype(new_type)
+                                update_selected_feature(df[col_name], col_name)
+                                st.success(f"✅ {col_name} successfully converted to {new_type}")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Impossible to convert {col_name} into {new_type}: {e}")
+        else:
+            st.write("You can change your types by changing them in the tab.")
+        
+        # Data Transformation: Normalization and Standardization
+        st.markdown("<a name=ns></a><hr>", unsafe_allow_html=True)
+        selected_feature = st.selectbox("Feature you want to modify", col, key="selected_feature")
 
-        with col2:
-            st.header("Numerosity reduction")
-            #curseur de quand c'est considéré comme categorical value
-            if st.session_state['data'][selected_feature].nunique() < threshold_cat: #categorical feature
+        is_continuous = df[selected_feature].nunique(dropna=True)>threshold_cat
+        few_categories = df[selected_feature].nunique()<3
+        if is_continuous: 
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(st.session_state.data[selected_feature].describe())
+            with col2:
+                bdf.new_title("Transformation", is_hr=False)
+                st.write("")
+                st.button("Normalize", on_click= update_selected_feature, args=(of.feature_normalization(df[selected_feature]), selected_feature))
+                st.write("")
+                st.button("Standardize", on_click= update_selected_feature, args=(of.feature_standardization(df[selected_feature]), selected_feature))
+
+        st.session_state['tab_key'] = 'num_red'
+        bdf.new_title("Numerosity reduction", "num_red")
+        
+        col1, col2 = st.columns(2)
+        
+        # Numerosity reduction for a categorical feature
+        if st.session_state['data'][selected_feature].nunique() < threshold_cat:
+            with col1:
                 st.markdown(f"Categorical feature with **{st.session_state['data'][selected_feature].unique().shape[0]}** unique data.")
-                st.dataframe(st.session_state['data'][selected_feature].value_counts(), use_container_width=True)
-                choice = st.radio("What would you like to do ?", {"Erase lines", "Merge categories"}, horizontal=True)
-
-                ## CHANGE THE WAY OF DOING IT: st.data_editor WITH STH TO DEL AND STH TO MODIFY THE CAT
-                ## THEN BUTTON TO VALIDATE THE MODIFICATIONS
-
-                if choice == "Erase lines":
-                    erase_cat = st.selectbox("Which category ?", st.session_state['data'][selected_feature].unique())
-                    if st.button("Confirm the erasing"):
-                        st.session_state['data'] = st.session_state['data'][st.session_state['data'][selected_feature] != erase_cat]
-                        st.write(f"Lines successfully deleted. New shape : {st.session_state['data'].shape}")
-                        st.rerun() #To update the display
-                
-                elif choice == "Merge categories":
-                    n_unique = st.session_state['data'][selected_feature].unique()
-                    st.write("Which category will be replaced ?")
-                    merging_cat1 = bdf.item_selection(n_unique)
-                    merging_cat2 = st.selectbox("With which category ?", [cat for cat in n_unique if cat not in merging_cat1])
-                    is_condition = st.toggle("Add a condition")
-                    if is_condition: #MAKE IT WORK
-                        condition = st.text_input("Type the condition", placeholder="cat == a")
-                        if condition: apply_a_cond(f"{condition} and {selected_feature}=='{merging_cat1}'", df=st.session_state['data'])
-                        #else: st.error("You didn't enter a condition.")
-                    else:
-                        filtered_data = st.session_state['data']
-                    
-                    if merging_cat1: #merge button is available only if some features are selected by the user to prevent errors
-                        st.button('Merge', on_click=merge_and_update, args=(selected_feature, merging_cat1, merging_cat2))
-
-            else: #continuous features
+            
+            # Numerosity reduction not allowed if there are 1 or 2 features (useless)
+            if few_categories:
+                with col1:
+                    st.dataframe(st.session_state['data'][selected_feature].value_counts(), use_container_width=True)
+                with col2:
+                    st.markdown("There are not enough values to reduce them. Would you like to erase the feature ?")
+                    if st.button("Delete the whole feature"):
+                        df = of.delete_feature(st.session_state.data, selected_feature)
+                        update_selected_feature(df)
+                        st.rerun()
+            else:
+                with col1:
+                    st.dataframe(st.session_state['data'][selected_feature].value_counts(), use_container_width=True)
+                    choice = st.radio("What would you like to do ?", {"Erase lines", "Merge categories"}, horizontal=True)
+    
+                with col2:
+                    if choice == "Erase lines":
+                        erase_cat = st.selectbox("Which category ?", st.session_state['data'][selected_feature].unique())
+                        if st.button("Confirm the erasing"):
+                            st.session_state['data'] = st.session_state['data'][st.session_state['data'][selected_feature] != erase_cat]
+                            st.write(f"Lines successfully deleted. New shape : {st.session_state['data'].shape}")
+                            st.rerun() #To update the display
+                        
+                    elif choice == "Merge categories":
+                        n_unique = st.session_state['data'][selected_feature].unique()
+                        st.write("Which category will be replaced ?")
+                        merging_cat1 = bdf.item_selection(n_unique)
+                        
+                        if merging_cat1: #the rest is available only if some features are selected by the user to prevent errors
+                            merging_choice = [cat for cat in n_unique if cat not in merging_cat1] + ["Create new..."] # add the choice to create a category
+                            merging_cat2 = st.selectbox("Into which category ?", merging_choice)
+                            if merging_cat2 == "Create new...":
+                                merging_cat2 = st.text_input("Name of the category", placeholder="Other")
+                                
+                            is_condition = st.toggle("Add a condition")
+                            if is_condition:
+                                condition = st.text_input("Type the condition", placeholder="cat == a")
+                                if st.button('Apply', key=st.session_state.tab_key):
+                                    if condition: 
+                                        of.apply_a_cond(f"{condition} and {selected_feature} in {merging_cat1}", df=st.session_state['data'])
+                                    else: 
+                                        st.error("You didn't enter a condition")
+                            else:
+                                condition = None
+                                
+                            st.button('Merge', on_click=merge_and_update, args=(selected_feature, merging_cat1, merging_cat2, condition))
+    
+        # Numerosity reduction for continuous features
+        else:
+            with col1:
                 st.markdown(f"Continuous feature with **{st.session_state['data'][selected_feature].nunique()}** unique data.")
-                show_method = st.radio("What do you want to show ?", {"Categories with more than 1 occurance", "Repartition of occurance"})
-                #Optimal nb of bins
+                # Optimal nb of bins calculation
                 bin_edges = np.histogram_bin_edges(st.session_state['data'][selected_feature].dropna(), bins="auto")  # Supprime les NaN si besoin
                 optimal_bins = len(bin_edges) - 1
                 bin_choice = 2
-
+                show_method = st.radio("What do you want to show ?", {"Categories with more than 1 occurance", "Repartition of occurance"})
+            
+            with col2:
                 if show_method == "Repartition of occurance":
                     bin_choice = st.slider("Number of bins:", min_value=2, max_value=round(optimal_bins*1.5), value=optimal_bins)
+                st.write("Before the reduction:")
                 bdf.repartition_display(show_method, st.session_state['data'][selected_feature], bin_choice)
-
-                set_reduce_methods = {"Equal-width intervals":1, "Equal-frequency intervals":2} #, "Round the data":3}
-                
-                if selected_feature not in st.session_state.reducing_desactivation:
-                    st.session_state.reducing_desactivation[selected_feature] = False
-
-                if not st.session_state.reducing_desactivation[selected_feature]:
+            
+            
+            if selected_feature not in st.session_state.reducing_desactivation:
+                st.session_state.reducing_desactivation[selected_feature] = False
+            
+            # Continue only if it has not been already done
+            if not st.session_state.reducing_desactivation[selected_feature]:
+                with col1:
+                    set_reduce_methods = {"Equal-width intervals":1, "Equal-frequency intervals":2}
+                        
                     reduce_method = st.radio("How do you want to reduce your data ?", set_reduce_methods)
-                    #PREVIEW of stats (boxplot ?) and hist ?
-
+        
                     df = st.session_state['data'][selected_feature]
                     default_value = st.session_state['data'][selected_feature].nunique() - 1 #nb of unique value for the feature -1 to prevent any error
                     max_value = round(optimal_bins*1.5)
@@ -456,30 +531,25 @@ with tab3:
                         max_value = default_value
                     elif optimal_bins < default_value:
                         default_value = optimal_bins
-
+    
                     nb_slices = st.slider("Number of slices:", min_value=2, max_value=max_value, value=default_value)
                     
                     if set_reduce_methods[reduce_method]==1:
-                        binned_series = equal_width_reduction(df, nb_slices)
-
+                        binned_series = of.equal_width_reduction(df, nb_slices)
+        
                     elif set_reduce_methods[reduce_method]==2:
-                        binned_series = equal_freq_reduction(df, nb_slices)
-
+                        binned_series = of.equal_freq_reduction(df, nb_slices)
+        
                     # Summarize each bin
-                    bin_summary = df.groupby(binned_series).agg(["min", "max", "mean", "median"])
-
-                    st.write("Bin Ranges & Summary Statistics:")
-                    bdf.display_rounded_df(bin_summary)
-
+                    with st.expander("Bin Ranges & Summary Statistics"):
+                        bin_summary = df.groupby(binned_series).agg(["min", "max", "mean", "median"])
+                        bdf.display_rounded_df(bin_summary)
+        
+                    # To keep understandability
                     aggregate_type = st.selectbox("Which value would you like to keep foreach bin ?", {"Min", "Max", "Mean", "Median"})
                     bin_values = df.groupby(binned_series).agg(aggregate_type.lower())
                     df = binned_series.map(bin_values)
-
-                    #elif set_reduce_methods[reduce_method]==3: ECQ ON GARDE CETTE METHOD ?
-                    #    is_float = df.dtype == "float64"
-                    #   rounding_factor = st.slider("Rounding factor (in power of 10)", min_value=-2 if is_float else 1, max_value=int(np.log10(max_val)))
-                    #  df = np.round(st.session_state['data'][selected_feature] / 10**rounding_factor) * 10**rounding_factor
-
+                    
                     dif_stat = pd.concat(
                         [st.session_state['data'][selected_feature].describe(), df.describe()],
                         axis=1,
@@ -487,18 +557,23 @@ with tab3:
                     )
 
                     bdf.display_rounded_df(dif_stat)
-
-                    bdf.repartition_display(show_method, df, bin_choice)
-
                     st.button("It's perfect like that", on_click=update_selected_feature, args=(df, selected_feature, True))
-                else: st.write("Discretization already done.")
 
-        bdf.new_title("Dimensionality reduction")
+                with col2:
+                    st.write("After the reduction:")
+                    bdf.repartition_display(show_method, df, bin_choice)
+        
+            else: st.write("Discretization already done.")
+        
+        st.session_state['tab_key'] = 'dim_red'
+        bdf.new_title("Dimensionality reduction", "dim_red")
+        
+        bdf.cor_mat(st.session_state['data'])
+                
+        df = st.session_state.data.copy()
         type_dim_red = st.selectbox("Type", {"Feature selection", "Feature construction"})
-
+        
         if type_dim_red == "Feature selection":
-            #whole_search = st.toggle("Exhaustive search")
-            #filter or wrapper ? Or only mRMR and QRA and EBR
 
             st.write("We will only deal with filter methods. You can try wrapper or embedded methods if you're doing a ML algorithm.")
             fs_method = st.selectbox("Which method do you want to adopt ?", {"mRMR", "QRA", "EBR"})

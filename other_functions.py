@@ -10,6 +10,7 @@ Functions used in my app.py that do not need streamlit.
 import pandas as pd
 import numpy as np
 import math
+from pandas.api.types import is_numeric_dtype
 from basic_display_functions import filtered_data_display, error, success, plot_decision_tree
 from sklearn.impute import KNNImputer
 from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
@@ -17,25 +18,43 @@ from sklearn.preprocessing import LabelEncoder
 
 def load_data(uploaded_file):
     """
-    Returns
-    -------
-    a dataframe corresponding to the uploaded file or a default dataframe if there are no uploaded file (healthcare dataset stroke data)
+    Returns:
+        A dataframe corresponding to the uploaded file or a default dataframe if there are no uploaded file (healthcare dataset stroke data)
     """
     if uploaded_file is not None:
         return pd.read_csv(uploaded_file)
     else:
         return pd.read_csv("healthcare-dataset-stroke-data.csv")
 
-def merge_features(selected_feature, merging_cat1, merging_cat2, df):
+def merge_features(selected_feature, merging_cat1, merging_cat2, df, input_condition=None):
     """
-    Merge 2 features together, with or without a condition: modifying merging_cat1 with condition in merging_cat2
+    Merge categories in a feature based on an optional condition.
+    
+    Parameters:
+    - selected_feature (str): The column where merging happens
+    - merging_cat1 (list): List of categories to replace
+    - merging_cat2 (str): New category name
+    - df (pd.DataFrame): The dataframe
+    - input_condition (str): A condition to filter rows before merging (e.g., 'age < 14')
+    
+    Returns:
+    - pd.DataFrame: The modified dataframe
     """
     try:
-        for cat in merging_cat1:
-            df.loc[df[selected_feature] == cat, selected_feature] = merging_cat2
+        condition_mask = df[selected_feature].isin(merging_cat1)
+
+        # Apply user-defined condition if provided
+        if input_condition:
+            condition_mask &= df.query(input_condition).index.to_series().isin(df.index)
+
+        # Apply the merge
+        df.loc[condition_mask, selected_feature] = merging_cat2
+        
     except Exception as e:
-        error(e)
+        error(f"Error merging categories: {e}")
+
     return df
+
 
 def smart_rounding(data):
     """
@@ -60,6 +79,17 @@ def smart_rounding(data):
     rounded_data = np.round(data / rounding_factor) * rounding_factor
     return rounded_data
 
+def feature_normalization(serie):
+    # CHOICE: min/max, p1/p99, 3sigma ?
+    max_val = np.nanmax(serie)
+    min_val = np.nanmin(serie)
+    serie = (serie - min_val)/(max_val - min_val)
+    return serie
+
+def feature_standardization(serie):
+    # CHOICE: z-score, mean_centering ?
+    return (serie - serie.mean()) / serie.std()
+
 def summary_features(df):
     summary_features = pd.DataFrame({
         "Feature Type": df.dtypes.astype(str),
@@ -70,15 +100,15 @@ def summary_features(df):
 
 def apply_a_cond(condition, df, disp=False, msg="Filtered Data:"):
     """
-    Verifies the truthness of the condition. Display the number of records corresponding.
+    Verifies the truthness of the condition. Displays the number of records corresponding.
+    
     Parameters:
-    ---------
-    condition: the condition to test (str)
-    df: the dataset where to apply this condition.
-    disp: boolean, True displays more informations about the condition. Default is False
+    - condition (str): the condition to test
+    - df (pd.DataFrame): the dataset where to apply this condition.
+    - disp (bool): True displays more informations about the condition. Default is False
+    
     Returns:
-    ---------
-    filtered_data:
+    filtered_data (pd.DataFrame)
     """
     #DEAL IF YOU WANT TO WORK WITH THE SAME COL IN DATA CLEANING & TRANSFO
     try:
@@ -123,7 +153,7 @@ def erase_records(df, col, cond, threshold_cat=40):
             else:  # cond is a unique value to delete
                 df = df[df[col] != cond]
 
-        elif pd.api.types.is_numeric_dtype(df[col]):  # Continuous data
+        elif is_numeric_dtype(df[col]):  # Continuous data
             if isinstance(cond, tuple) and len(cond) == 2:
                 df = df[(df[col] >= cond[0]) & (df[col] <= cond[1])]  # We only keep values in between cond[0] and cond[1]
             else:
@@ -139,21 +169,29 @@ def erase_records(df, col, cond, threshold_cat=40):
         return df
 
 def delete_feature(df, feature):
-    return df.drop(column = feature)
+    return df.drop(feature, axis=1)
 
-def multiple_encode(df, selected_features):
+def encode(serie):
+    le = LabelEncoder()
+    encoded_serie = le.fit_transform(serie)
+    return encoded_serie, le
+
+def multiple_encode(df, selected_features = None):
     """
     Encode columns of a dataset that need to be encode (type object or category).
 
     Parameters:
         df (pd.DataFrame): The dataset
-        selected_features (list): The column to encode if needed
+        selected_features (list): The columns to encode if needed. When None, encode all the columns. Default is None
 
     Returns:
         df_encoded (pd.DataFrame): The encoded dataframe
         label_encoders (list): The LabelEncoder of each encoded column
     """
-    df_encoded = df[selected_features].copy()
+    if selected_features is None:
+        df_encoded = df.copy()
+    else:
+        df_encoded = df[selected_features].copy()
     label_encoders = {}
 
     for col in df_encoded.select_dtypes(include=["object", "category"]).columns:
@@ -168,7 +206,7 @@ def knn_imputation(df, imputation_feature, selected_features, k=5):
     Impute missing values in a column using K-Nearest Neighbors (KNN).
 
     Parameters:
-        df (pd.DataFrame): The dataset
+        df (pd.DataFrame): Full dataset
         imputation_feature (str): The column to impute
         selected_features (list): Features used for imputation
         k (int): Number of neighbors (default: 5)

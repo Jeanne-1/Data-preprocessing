@@ -1,9 +1,6 @@
 streamlit
 pandas
-math
-random
 numpy
 matplotlib
 seaborn
-sklearn
-os
+scikit-learn

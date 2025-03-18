@@ -40,7 +40,7 @@ def update_fill_na(df_col, feature):
     st.session_state.data[feature] = imputed_df
 
 #%%Page config
-st.set_page_config(page_title="Data Preprocessing App", page_icon=":clean:")
+st.set_page_config(page_title="Data Preprocessing App", page_icon=":brain:")
 
 st.title("Data preprocessing")
 st.write("This application will help you analyze, clean and reduce a dataset of your choice. Remember you can navigate between the different pages at any time, and process each preprocessing step at the desired time. You can go to page Learn to learn how to do it by yourself. ")
@@ -113,12 +113,13 @@ with tab1:
         bdf.new_title('Filtered Data', "filtered")
         user_input = st.text_input("Enter your condition:", placeholder="feature == a")
         if st.button('Apply', key=1):
-            if user_input: of.apply_a_cond(user_input, df=st.session_state['data'], disp=True)
+            if user_input: of.apply_a_cond(user_input, df=df, disp=True)
             else: st.error("Please enter a condition")
 
 #%% Data Cleaning
 with tab2:
     if st.session_state['data'] is not None:
+        df = st.session_state['data'].copy() #we create a copy of st.session_state.data that will be modified
         st.markdown("""
         ## Data Cleaning
         - [Anormal Values](#av)
@@ -127,7 +128,7 @@ with tab2:
         """, unsafe_allow_html=True)
 
         st.write(f"This column has been chosen for y: {st.session_state.y}. You can change it in the sidebar.")
-        col = st.session_state['data'].columns
+        col = df.columns
        
         bdf.new_title("Handle anormal values", "av", is_hr=False)
         st.session_state['tab_key'] = 'tab2_av'
@@ -137,56 +138,65 @@ with tab2:
             selected_feature = st.selectbox("Which feature do you want to work with ?", col)
         with col2:
             hue_on = st.toggle(f"Comparing to {st.session_state.y}")
-        bdf.display_cat_repartition(st.session_state.data,selected_feature, hue_on)
+        bdf.display_cat_repartition(df,selected_feature, hue_on)
 
-        df_selected_feature = st.session_state.data[selected_feature]
+        df_selected_feature = df[selected_feature]
         nb_cat_selected_feature = df_selected_feature.nunique()
         few_categories = False #has the feature less than 3 cat ?
 
+        # If there are 1 or 2 features, you cannot yet handle anormal values
+        # In a few, you will be able to detect anormal values given a condition (ex: smoking = True and age = 0.2)
         if nb_cat_selected_feature<3:
             col1, col2 = st.columns([3,2], vertical_alignment="center")
             with col1: st.write(f"There are already only {nb_cat_selected_feature} categories.")
             with col2:
                 if st.button("Delete the whole feature"):
-                    df = of.delete_feature(st.session_state.data, selected_feature)
-                    update_selected_feature(df)
-                    st.rerun()
+                    df = of.delete_feature(df, selected_feature) #df is upadted inplace
+                    update_selected_feature(df) #we update session_state
+                    st.rerun() #and the display
             few_categories = True
-
-        # ADD A CONDITION
+        
+        # For a categorical value, you can select anormal categories to erase (full record or just the cat)
         elif nb_cat_selected_feature<threshold_cat:
             st.write("Select anormal values :")
             selected_items = bdf.item_selection(df_selected_feature.unique(), multi_column=True)
 
         elif is_numeric_dtype(df_selected_feature):
-            min_val = df_selected_feature.min()
-            max_val = df_selected_feature.max()
-            selected_items = st.slider(f"{selected_feature} is anormal when its value is not in between:", min_value = min_val, max_value = max_val, value=(min_val, max_val)) #get rid of the NaN
-            of.apply_a_cond(f"{selected_feature}<{selected_items[0]} or {selected_feature}>{selected_items[1]}", st.session_state.data, disp=True, msg="Data concerned by the change:")
+            min_val = np.nanmin(df_selected_feature) # min without NaN
+            max_val = np.nanmax(df_selected_feature) # max without NaN
+            selected_items = st.slider(
+                f"{selected_feature} is anormal when its value is not in between:", 
+                min_value = min_val, max_value = max_val, 
+                value=(min_val, max_val)
+                )
+            of.apply_a_cond( # Visualization
+                f"{selected_feature}<{selected_items[0]} or {selected_feature}>{selected_items[1]}", 
+                df, disp=True, msg="Data concerned by the change:"
+                )
         
         col1, col2 = st.columns([1,3])
         with col1:
             if not few_categories and st.button("Erase the record(s)"):
-                #erase lines values outside [selected_items[0], selected_items[1]] or selected_items
                 df = of.erase_records(st.session_state.data, selected_feature, selected_items, threshold_cat)
+                # Erase lines with values outside [selected_items[0], selected_items[1]] or selected_items
                 update_selected_feature(df)
-                st.rerun() #To update the display
+                st.rerun()
         with col2:
             if not few_categories and st.button("Replace with NaN"):
-                #replace values outside [selected_items[0], selected_items[1]] or selected_items with NaN
                 df = of.nan_replace(st.session_state.data, selected_feature, selected_items)
                 update_selected_feature(df, selected_feature)
+                # Delete values outside [selected_items[0], selected_items[1]] or selected_items (replaced with NaN)
                 st.rerun()
         
         bdf.new_title("Handle missing values", "mv")
         st.session_state['tab_key'] = 'tab2_mv'
-        df = st.session_state.data.copy()
 
         nan_features = df.isnull().sum()>0
         nb_nan_features = nan_features.sum()
         if nb_nan_features>0:
             st.subheader("Removal")
             col1, col2 = st.columns([2,1], vertical_alignment="bottom")
+            
             # Delete features
             with col1:
                 df_nan = pd.DataFrame({
@@ -200,14 +210,13 @@ with tab2:
                 )
             with col2:
                 if st.button("Delete checked features"):
-                    #For each checked feature in the tab, we remove the column from the df
+                    # For each checked feature in the tab, we remove the column from the df
                     cols_to_remove = edited_df_nan[edited_df_nan["Remove ?"]].index.tolist()
                     st.session_state.data.drop(columns=cols_to_remove, inplace=True)
                     st.success(f"Features {cols_to_remove} successfully removed!")
                     st.rerun()
         
             # Delete records
-            #CHANGE THE MAX TO BE THE MAX A RECORD CAN HAVE OF NAN VALUES
             if nb_nan_features>1:
                 max_nan_values = st.slider(
                     "Records with these NaN values or more:", 
@@ -215,6 +224,7 @@ with tab2:
                     value=1
                     )
             else: max_nan_values=1
+            
             bdf.filtered_data_display(
                 df[df.isna().sum(axis=1)>=max_nan_values], 
                 details=True, 
@@ -222,7 +232,7 @@ with tab2:
                 )
             
             if st.button("Erase these records"):
-                # erase values with more than max_nan_values NaN
+                # Erase values with more than max_nan_values NaN
                 threshold = df.shape[1] - max_nan_values + 1
                 df.dropna(thresh=threshold, inplace=True)
                 st.session_state["data"] = df
@@ -261,7 +271,6 @@ with tab2:
                 if is_continuous:
                     imputation_mean = df[imputation_feature].mean()
                     if st.button(f"the mean: {round(imputation_mean,2)}", use_container_width=True):
-                        # TO ROUND CORRECTLY
                         imputed_df = df[imputation_feature].fillna(imputation_mean)
                         update_selected_feature(imputed_df, imputation_feature)
                         st.rerun()
@@ -289,8 +298,6 @@ with tab2:
                         on_change=update_fill_na, 
                         args=(df[imputation_feature], imputation_feature)
                     )
-
-                # GROUP-BY IMPUTATION TO ADD
             
             # Imputation with ML (DT or KNN)
             with col2:
@@ -298,7 +305,12 @@ with tab2:
                 ml_choice = st.selectbox("ML choice", {"Decision Tree", "KNN"}, label_visibility="collapsed")
 
                 non_na_features = df.columns[df.notna().all()]
-                selected_features = bdf.item_selection(non_na_features, default_value=True, is_popover=	True, popover_msg=f"Features used for imputation of {imputation_feature}")
+                selected_features = bdf.item_selection(
+                    non_na_features, 
+                    default_value=True, 
+                    is_popover=	True, 
+                    popover_msg=f"Features used for imputation of {imputation_feature}"
+                )
 
                 name = "Max depth :" if ml_choice == "Decision Tree" else "Number of neighbors :"
                 arg = st.slider(name, min_value = 2, max_value = 10, value=4)
@@ -376,13 +388,14 @@ with tab3:
         """, unsafe_allow_html=True)
         st.write(f"This column has been chosen for y: {st.session_state.y}. You can change it in the sidebar.")
         
-        col = st.session_state['data'].columns
+        
+        df = st.session_state.data.copy()
+        col = df.columns
         
         bdf.new_title("Type change", "tc", is_hr=False)
         
-         # Possible types
+        # Possible types
         possible_types = ["int64", "float64", "object", "category", "bool"]
-        df = st.session_state.data.copy()
         
         st.data_editor(
             of.summary_features(st.session_state.data),
@@ -391,7 +404,7 @@ with tab3:
                     "Feature Type", options=possible_types
                 )
             },
-            disabled=["", "Unique Values", "Missing %"], #You can only modify feature_type
+            disabled=["", "Unique Values", "Missing %"], # You can only modify feature_type
             use_container_width=True,
             key="edited_type",
         )
@@ -508,10 +521,12 @@ with tab3:
                 bin_edges = np.histogram_bin_edges(st.session_state['data'][selected_feature].dropna(), bins="auto")  # Supprime les NaN si besoin
                 optimal_bins = len(bin_edges) - 1
                 bin_choice = 2
-                show_method = st.radio("What do you want to show ?", {"Categories with more than 1 occurance", "Repartition of occurance"})
+                display_choice = {"Categories with more than 1 occurance":0, "Repartition of occurance":1}
+                show_method = st.radio("What do you want to show ?", display_choice)
+                show_method = display_choice[show_method]
             
             with col2:
-                if show_method == "Repartition of occurance":
+                if show_method == 1:
                     bin_choice = st.slider("Number of bins:", min_value=2, max_value=round(optimal_bins*1.5), value=optimal_bins)
                 st.write("Before the reduction:")
                 bdf.repartition_display(show_method, st.session_state['data'][selected_feature], bin_choice)
@@ -568,11 +583,12 @@ with tab3:
         
             else: st.write("Discretization already done.")
         
-        st.session_state['tab_key'] = 'dim_red'
         bdf.new_title("Dimensionality reduction", "dim_red")
         
+        st.session_state['tab_key'] = 'cor'
         bdf.cor_mat(st.session_state['data'])
                 
+        st.session_state['tab_key'] = 'dim_red'
         df = st.session_state.data.copy()
         type_dim_red = st.selectbox("Type", {"Feature selection", "Feature construction"})
         
@@ -589,40 +605,39 @@ with tab3:
         cols = [c for c in df.columns if c != y]
             
         nb_features_selected = st.slider(f"How many features do you want to {name} ?", min_value = 1, max_value = len(cols), value = 5)
-        selected_cols = bdf.item_selection(cols, min_non_selected=nb_features_selected, default_value = True, is_popover=True, popover_msg="Tested features")
+        col1, col2 = st.columns([1,3])
+        with col1:
+            selected_cols = bdf.item_selection(cols, min_non_selected=nb_features_selected, default_value = True, is_popover=True, popover_msg="Tested features")
         
         if len(selected_cols)==nb_features_selected:
             st.write("You don't need to use a method, you already have the wanted amount of features.")
             st.dataframe(selected_features)
             
         else:
-            if type_dim_red == "Feature selection": 
-                selected_cols.append(y)
-                if st.button("mRMR"):
-                    selected_features = of.mrmr_feature_selection(df[selected_cols], y)
-                    st.dataframe(selected_features)
-                    st.session_state.new_df = df[selected_features]
-            #when do you stop ? when you don't lost any information VS when you have a certain nb of features
+            with col2:
+                if type_dim_red == "Feature selection": 
+                    selected_cols.append(y)
+                    if st.button("mRMR"):
+                        selected_features = of.mrmr_feature_selection(df[selected_cols], y)
+                        st.dataframe(selected_features)
+                        st.session_state.new_df = df[selected_features]
+                    
+                #PCA
+                elif type_dim_red == "Feature construction":
+                    df.dropna(inplace = True)
+                    
+                    X = df[selected_cols]
+                    y = df[y]
+                    
+                    y_encoded, le = of.encode(y)
+                    X_encoded, Xle = of.multiple_encode(X)
+                    
+                    if st.button("PCA"):
+                        pca = PCA(n_components=nb_features_selected)
+                        new_df = pca.fit_transform(X_encoded)
+                        st.session_state.new_df = pd.DataFrame(new_df)
+                        st.dataframe(new_df)
                 
-            #PCA
-            elif type_dim_red == "Feature construction":
-                df.dropna(inplace = True)
-                
-                X = df[selected_cols]
-                y = df[y]
-                
-                y_encoded, le = of.encode(y)
-                X_encoded, Xle = of.multiple_encode(X)
-                
-                if st.button("PCA"):
-                    pca = PCA(n_components=nb_features_selected)  # Keeping only 4 components
-                    new_df = pca.fit_transform(X_encoded)
-                    st.session_state.new_df = pd.DataFrame(new_df)
-                    st.dataframe(new_df)
-            
-            # MAKE IT WORK WITH OTHER DOWNLOADING FORMAT
-            # PUT BACK ID
-            # DOWNLOAD IN THE SIDE BAR AT ANY TIME YOUR FULL DATASET
             if st.session_state.new_df is not None:
                 access_path = st.text_input("Access path", value=getcwd())
                 col1,col2 =st.columns(2, vertical_alignment="bottom")

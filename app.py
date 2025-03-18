@@ -52,10 +52,13 @@ tab1, tab2, tab3 = st.tabs(["Data Visualization", "Data cleaning", "Data transfo
 st.sidebar.header("Data Upload")
 uploaded_file = st.sidebar.file_uploader("Upload your CSV file", type=["csv"])
 
-if 'data' not in st.session_state or st.sidebar.button('Reload Data'):
-    st.session_state['data'] = of.load_data(uploaded_file)
+if 'data' not in st.session_state:
+    st.session_state['data'] = of.load_data(uploaded_file)  
+    
+# Load data into session state
+if uploaded_file is not None:
+    st.session_state["data"] = of.load_data(uploaded_file)
 
-register = False #if the df changes, we need to register it in clean_dataset.csv
 st.sidebar.selectbox("y : ",st.session_state['data'].columns, key="y")
 
 if "reducing_desactivation" not in st.session_state:
